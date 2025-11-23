@@ -263,7 +263,7 @@
         let sessionToken = null;
         let submissionCount = 0;
         let leaderboardData = [];
-        let score = 0; // ensure global
+        let score = 0; // single global declaration, remove duplicates
 
         const VAULT_ABI = [
             "function payEntry() external",
@@ -914,8 +914,7 @@
         let gameState = 'MENU'; 
         let frameId;
         let lastTime = 0;
-        let gameSpeed = 300; // px per sec
-        let score = 0;
+        let gameSpeed = 300;
         let lastLeaderboardUpdate = 0;
         let currentRank = '--';
         
@@ -1169,6 +1168,7 @@
             if (Math.random() < spawnChance) {
                 const lane = Math.floor(Math.random() * 3);
                 const safe = ![...obstacles, ...collectibles].some(e => e.laneIndex === lane && e.y < 100);
+                if (safe
                 if (safe) {
                     // More coins at start, more obstacles later
                     const coinChance = Math.max(0.6 - (score / 5000), 0.3);
