@@ -6,20 +6,21 @@ import "../FarMeowVault.sol";
 
 contract UpgradeScript is Script {
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address proxyAddress = vm.envAddress("PROXY_ADDRESS");
         
-        vm.startBroadcast(deployerPrivateKey);
+        console.log("Upgrading FarMeowVault at:", proxyAddress);
+        
+        vm.startBroadcast();
         
         // Deploy new implementation
-        FarMeowVault newImplementation = new FarMeowVault();
-        console.log("New implementation deployed at:", address(newImplementation));
+        FarMeowVault newImpl = new FarMeowVault();
+        console.log("New Implementation:", address(newImpl));
         
-        // Upgrade proxy to new implementation
+        // Upgrade proxy
         FarMeowVault proxy = FarMeowVault(proxyAddress);
-        proxy.upgradeTo(address(newImplementation));
+        proxy.upgradeTo(address(newImpl));
         
-        console.log("Proxy upgraded successfully");
+        console.log("Upgrade successful!");
         
         vm.stopBroadcast();
     }

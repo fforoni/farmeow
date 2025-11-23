@@ -7,30 +7,48 @@ import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract DeployScript is Script {
     function run() external {
-        // SECURE: Read from env, never hardcode
-        uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        // Load from environment
         address usdcAddress = vm.envAddress("USDC_ADDRESS");
         address gameServer = vm.envAddress("GAME_SERVER");
         
-        vm.startBroadcast(deployerPrivateKey);
+        console.log("==============================================");
+        console.log("Deploying FarMeowVault to Base Sepolia");
+        console.log("==============================================");
+        console.log("USDC Address:", usdcAddress);
+        console.log("Game Server:", gameServer);
+        console.log("");
         
-        // Deploy implementation
+        vm.startBroadcast();
+        
+        // Step 1: Deploy implementation
+        console.log("Deploying implementation...");
         FarMeowVault implementation = new FarMeowVault();
         console.log("Implementation:", address(implementation));
         
-        // Encode initializer
-        bytes memory data = abi.encodeWithSelector(
+        // Step 2: Encode initializer
+        bytes memory initData = abi.encodeWithSelector(
             FarMeowVault.initialize.selector,
             usdcAddress,
             gameServer
         );
         
-        // Deploy proxy
+        // Step 3: Deploy proxy
+        console.log("Deploying proxy...");
         ERC1967Proxy proxy = new ERC1967Proxy(
             address(implementation),
-            data
+            initData
         );
-        console.log("Proxy (use this):", address(proxy));
+        
+        console.log("");
+        console.log("==============================================");
+        console.log("DEPLOYMENT SUCCESSFUL!");
+        console.log("==============================================");
+        console.log("Proxy Address:", address(proxy));
+        console.log("Implementation:", address(implementation));
+        console.log("");
+        console.log("UPDATE App.html:");
+        console.log("VAULT_CONTRACT: '%s'", address(proxy));
+        console.log("==============================================");
         
         vm.stopBroadcast();
     }

@@ -240,10 +240,9 @@
         // ============================================
         
         const CONFIG = {
-            // REMOVED: NEYNAR_API_KEY (move to backend)
-            VAULT_CONTRACT: '0x...', // Deploy FarMeowVault.sol to Base
-            USDC_ADDRESS: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-            BASE_CHAIN_ID: 8453,
+            VAULT_CONTRACT: '0xABCD1234...', // PASTE YOUR PROXY ADDRESS HERE
+            USDC_ADDRESS: '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // Base Sepolia USDC
+            BASE_CHAIN_ID: 84532, // Base Sepolia chain ID
             ENTRY_FEE: '250000', // 0.25 USDC (6 decimals)
             API_ENDPOINT: 'https://api.far-meow.app',
             MAX_SCORE: 999999, // Anti-cheat: max possible score
@@ -788,6 +787,7 @@
                 console.error('❌ Score submission failed:', error);
                 return { rank: '--', payout: '0.00' };
             }
+forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v4.9.3 --no-commit
         }
 
         // SIMPLIFIED: Share result via Warpcast only

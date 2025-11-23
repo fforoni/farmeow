@@ -37,3 +37,4 @@ yarn-error.log*
 *.key
 *.pem
 keystore/
+.env
