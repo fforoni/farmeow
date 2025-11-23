@@ -4,7 +4,8 @@
 
 # Dependencies
 node_modules/
-lib/
+# lib/ # Commented out because we need to track frame-sdk.min.js manually
+
 
 # Build artifacts
 out/
