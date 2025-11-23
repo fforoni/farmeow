@@ -6,6 +6,7 @@
     <title>Far Meow 🐱⚡</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+    <script src="lib/frame-sdk.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         body { margin: 0; padding: 0; background: #050510; font-family: Nunito, sans-serif; }
@@ -60,8 +61,8 @@
 
         const VAULT_ABI = [
             "function payEntry() external",
-            "function getCurrentRound() view returns (uint256, uint256, uint256, uint256, bool)",
-            "function getTopPlayers(uint256) view returns (address[], uint256[])",
+            "function getCurrentRound() view returns (uint256 roundId, uint256 vaultAmount, uint256 totalPlayers, uint256 timeRemaining, bool finalized)",
+            "function getTopPlayers(uint256) view returns (address[] players, uint256[] scores)",
             "function estimatePayout(uint256) view returns (uint256)"
         ];
 
@@ -71,28 +72,69 @@
             "function allowance(address owner, address spender) view returns (uint256)"
         ];
 
+        // Initialize Frame SDK
+        window.addEventListener('load', async () => {
+            console.log('Window loaded');
+            const statusEl = document.getElementById('statusText');
+            
+            if (window.frame && window.frame.sdk) {
+                console.log('Frame SDK detected');
+                try {
+                    await window.frame.sdk.actions.ready();
+                    console.log('Frame SDK Ready');
+                    statusEl.textContent = '👇 Click CONNECT WALLET (Frame)';
+                } catch (err) {
+                    console.error('Frame SDK Init Error:', err);
+                }
+            } else if (window.frame) {
+                 console.log('Frame global detected but structure unknown', window.frame);
+                 // Fallback: try calling ready directly if frame is the sdk
+                 try {
+                    if (window.frame.actions && window.frame.actions.ready) {
+                         await window.frame.actions.ready();
+                         console.log('Frame SDK Ready (Direct)');
+                    }
+                 } catch(e) { console.error(e); }
+            }
+        });
+
         async function connectWallet() {
+            const statusEl = document.getElementById('statusText');
             try {
-                if (!window.ethereum) {
-                    alert('Install MetaMask: https://metamask.io');
+                statusEl.textContent = 'Initializing...';
+
+                let ethProvider = window.ethereum;
+
+                // If Frame SDK is available, try to use its provider or wait for it
+                if (window.frame && window.frame.sdk && window.frame.sdk.wallet && window.frame.sdk.wallet.ethProvider) {
+                    console.log('Using Frame SDK Provider');
+                    ethProvider = window.frame.sdk.wallet.ethProvider;
+                }
+
+                if (!ethProvider) {
+                    alert('Install MetaMask or open in Farcaster App');
+                    statusEl.textContent = '❌ Wallet not found';
                     return;
                 }
 
-                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
-                provider = new ethers.providers.Web3Provider(window.ethereum);
+                statusEl.textContent = 'Requesting accounts...';
+                const accounts = await ethProvider.request({ method: 'eth_requestAccounts' });
+                
+                provider = new ethers.providers.Web3Provider(ethProvider);
                 signer = provider.getSigner();
                 const address = accounts[0];
-
+                
+                statusEl.textContent = 'Checking network...';
                 const network = await provider.getNetwork();
                 if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
                     try {
-                        await window.ethereum.request({
+                        await ethProvider.request({
                             method: 'wallet_switchEthereumChain',
                             params: [{ chainId: '0x14a34' }]
                         });
                     } catch (e) {
                         if (e.code === 4902) {
-                            await window.ethereum.request({
+                            await ethProvider.request({
                                 method: 'wallet_addEthereumChain',
                                 params: [{
                                     chainId: '0x14a34',
@@ -104,12 +146,16 @@
                             });
                         } else throw e;
                     }
+                    // Refresh provider after network switch
+                    provider = new ethers.providers.Web3Provider(ethProvider);
+                    signer = provider.getSigner();
                 }
 
+                statusEl.textContent = 'Connecting to contracts...';
                 vault = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signer);
                 usdc = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signer);
 
-                document.getElementById('statusText').textContent = `✅ ${address.slice(0,6)}...${address.slice(-4)}`;
+                statusEl.textContent = `✅ ${address.slice(0,6)}...${address.slice(-4)}`;
                 document.getElementById('connectBtn').style.display = 'none';
                 document.getElementById('playBtn').style.display = 'block';
 
@@ -118,6 +164,7 @@
             } catch (error) {
                 alert(`Error: ${error.message}`);
                 console.error(error);
+                statusEl.textContent = '❌ Connection failed';
             }
         }
 

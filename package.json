@@ -2,7 +2,7 @@
   "name": "far-meow",
   "version": "1.0.0",
   "description": "Far Meow - Cat Running Game Farcaster Mini App",
-  "main": "App.html",
+  "main": "index.html",
   "scripts": {
     "dev": "npx serve .",
     "backend": "cd backend && npm run dev",
