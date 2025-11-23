@@ -1,0 +1,18 @@
+{
+  "accountAssociation": {
+    "header": "eyJmaWQiOjEyMzQ1LCJ0eXBlIjoiY3VzdG9keSIsImtleSI6IjB4MDBCMTA2OUY1NEMzQjM5NjY2NzY3NzhFRDY0N0Y0OTZCM0FFRjEzMyJ9",
+    "payload": "eyJkb21haW4iOiJmYXItbWVvdy5hcHAifQ",
+    "signature": "MHhhYmNkZWYxMjM0NTY3ODkwYWJjZGVmMTIzNDU2Nzg5MGFiY2RlZjEyMzQ1Njc4OTBhYmNkZWYxMjM0NTY3ODkw"
+  },
+  "frame": {
+    "version": "next",
+    "name": "Far Meow",
+    "iconUrl": "https://far-meow.app/icon.png",
+    "homeUrl": "https://far-meow.app",
+    "imageUrl": "https://far-meow.app/splash.png",
+    "buttonTitle": "Play Far Meow",
+    "splashImageUrl": "https://far-meow.app/splash-bg.png",
+    "splashBackgroundColor": "#050510",
+    "webhookUrl": "https://api.far-meow.app/webhook"
+  }
+}
