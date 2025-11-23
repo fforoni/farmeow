@@ -141,7 +141,13 @@ contract FarMeowVault is
     
     // ============ Core Game Functions ============
     
-    function payEntry() external nonReentrant whenNotPaused onlyVerified {
+    function payEntry() external nonReentrant whenNotPaused {
+        // AUTO-VERIFY on first payment (removes need for backend verification)
+        if (!verifiedPlayers[msg.sender]) {
+            verifiedPlayers[msg.sender] = true;
+            emit PlayerVerified(msg.sender, 0); // FID = 0 for non-Farcaster users
+        }
+        
         if (block.timestamp >= roundStartTime + ROUND_DURATION) {
             _startNewRound();
         }
@@ -383,4 +389,13 @@ contract FarMeowVault is
      * without shifting down storage layout of child contracts.
      */
     uint256[50] private __gap;
+
+    // NOTE for frontend ABI:
+    // - payEntry()
+    // - commitScore(bytes32)
+    // - getCurrentRound() -> (uint256,uint256,uint256,uint256,bool)
+    // - getPlayerScore(address)
+    // - getTopPlayers(uint256)
+    // - estimatePayout(uint256)
+    // - verifyPlayer(address,uint256) [onlyGameServer]
 }

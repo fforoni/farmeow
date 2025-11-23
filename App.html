@@ -56,11 +56,7 @@
             ENTRY_FEE: '250000'
         };
 
-        let provider = null;
-        let signer = null;
-        let vault = null;
-        let usdc = null;
-        let currentRound = null;
+        let provider = null, signer = null, vault = null, usdc = null, currentRound = null;
 
         const VAULT_ABI = [
             "function payEntry() external",
@@ -71,8 +67,8 @@
 
         const ERC20_ABI = [
             "function balanceOf(address) view returns (uint256)",
-            "function approve(address, uint256) external returns (bool)",
-            "function allowance(address, address) view returns (uint256)"
+            "function approve(address spender, uint256 amount) external returns (bool)",
+            "function allowance(address owner, address spender) view returns (uint256)"
         ];
 
         async function connectWallet() {
@@ -82,15 +78,11 @@
                     return;
                 }
 
-                const accounts = await window.ethereum.request({
-                    method: 'eth_requestAccounts'
-                });
-
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
                 provider = new ethers.providers.Web3Provider(window.ethereum);
                 signer = provider.getSigner();
                 const address = accounts[0];
 
-                // Check network
                 const network = await provider.getNetwork();
                 if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
                     try {
@@ -110,21 +102,19 @@
                                     blockExplorerUrls: ['https://sepolia.basescan.org']
                                 }]
                             });
-                        }
+                        } else throw e;
                     }
                 }
 
                 vault = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signer);
                 usdc = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signer);
 
-                document.getElementById('statusText').innerHTML = `✅ Connected: ${address.slice(0,6)}...${address.slice(-4)}`;
+                document.getElementById('statusText').textContent = `✅ ${address.slice(0,6)}...${address.slice(-4)}`;
                 document.getElementById('connectBtn').style.display = 'none';
                 document.getElementById('playBtn').style.display = 'block';
 
-                // Load data
                 await updateAll();
                 setInterval(updateAll, 10000);
-
             } catch (error) {
                 alert(`Error: ${error.message}`);
                 console.error(error);
@@ -135,31 +125,26 @@
             try {
                 const roundData = await vault.getCurrentRound();
                 currentRound = roundData[0].toNumber();
-
                 const pot = ethers.utils.formatUnits(roundData[1], 6);
                 const timeLeft = roundData[3].toNumber();
 
                 document.getElementById('pot').textContent = Math.floor(pot).toLocaleString();
                 updateTimer(timeLeft);
 
-                // Balance
                 const address = await signer.getAddress();
                 const balance = await usdc.balanceOf(address);
-                document.getElementById('balance').textContent = ethers.utils.formatUnits(balance, 6);
+                document.getElementById('balance').textContent = `${ethers.utils.formatUnits(balance, 6)} USDC`;
 
-                // Leaderboard
                 const [addresses, scores] = await vault.getTopPlayers(currentRound);
                 let html = '';
                 for (let i = 0; i < Math.min(addresses.length, 20); i++) {
-                    const rankClass = i === 0 ? 'rank-1' : i === 1 ? 'rank-2' : i === 2 ? 'rank-3' : '';
                     const payout = await vault.estimatePayout(i);
-                    html += `<div class="flex justify-between p-2 ${rankClass ? 'bg-gray-700' : ''}">
+                    html += `<div class="flex justify-between p-2 ${i<3?'bg-gray-800':''}">
                         <span>${i+1}. ${addresses[i].slice(0,6)}...${addresses[i].slice(-4)}</span>
                         <span>${scores[i]} pts</span>
                     </div>`;
                 }
                 document.getElementById('leaderboardList').innerHTML = html || '<p class="text-gray-400">No players yet</p>';
-
             } catch (error) {
                 console.error('Update failed:', error);
             }
@@ -168,8 +153,7 @@
         function updateTimer(seconds) {
             const m = Math.floor(seconds / 60);
             const s = seconds % 60;
-            document.getElementById('timer').textContent = 
-                `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+            document.getElementById('timer').textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
 
         async function initiatePayment() {
@@ -181,34 +165,31 @@
 
                 const address = await signer.getAddress();
                 const balance = await usdc.balanceOf(address);
-
                 if (balance.lt(CONFIG.ENTRY_FEE)) {
-                    alert('Insufficient USDC (need 0.25)');
+                    alert('Need at least 0.25 USDC');
                     return;
                 }
 
                 const allowance = await usdc.allowance(address, CONFIG.VAULT_CONTRACT);
                 if (allowance.lt(CONFIG.ENTRY_FEE)) {
-                    alert('Approving USDC...');
                     const tx = await usdc.approve(CONFIG.VAULT_CONTRACT, ethers.utils.parseUnits('100', 6));
                     await tx.wait(1);
                 }
 
-                alert('Paying entry fee...');
                 const tx = await vault.payEntry();
                 await tx.wait(1);
 
-                alert('✅ Entry paid! Game starting...');
+                alert('✅ Entry paid! Game starts now.');
                 await updateAll();
-
             } catch (error) {
                 alert(`Payment error: ${error.message}`);
                 console.error(error);
             }
         }
 
-        // Init on load
-        document.getElementById('statusText').textContent = typeof ethers !== 'undefined' ? '👇 Click CONNECT WALLET' : '❌ Failed to load ethers';
+        document.getElementById('statusText').textContent = typeof ethers !== 'undefined'
+            ? '👇 Click CONNECT WALLET'
+            : '❌ Failed to load ethers';
     </script>
 </body>
 </html>
