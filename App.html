@@ -4,17 +4,18 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta property="fc:frame" content="vNext">
-    <meta property="fc:frame:image" content="https://far-meow.app/og-image.png">
-    <meta property="og:image" content="https://far-meow.app/og-image.png"> <!-- Added for social sharing -->
+    <meta property="fc:frame:image" content="https://farmeow.vercel.app/og-image.png">
+    <meta property="og:image" content="https://farmeow.vercel.app/og-image.png">
     <meta property="og:title" content="Far Meow - Cat Running Game">
     <meta property="og:description" content="Compete for hourly USDC prizes! 🐱⚡">
     <meta property="fc:frame:button:1" content="Play Far Meow 🐱">
     <meta property="fc:frame:button:1:action" content="link">
-    <meta property="fc:frame:button:1:target" content="https://far-meow.app">
+    <meta property="fc:frame:button:1:target" content="https://farmeow.vercel.app">
     <title>Far Meow: Cat Running Game 🐱⚡</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/@farcaster/frame-sdk@0.1.5/dist/frame-sdk.umd.js"></script>
-    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js" type="text/javascript"></script>
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
+    <!-- Neynar Mini App SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/@neynar/nodejs-sdk@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
         body {
@@ -236,7 +237,7 @@
 
     <script>
         // ============================================
-        // FARCASTER & WALLET INTEGRATION
+        // CONFIG & GLOBALS
         // ============================================
         
         const CONFIG = {
@@ -245,12 +246,11 @@
             BASE_CHAIN_ID: 84532,
             ENTRY_FEE: '250000',
             API_ENDPOINT: 'https://api.far-meow.app',
+            NEYNAR_CLIENT_ID: 'YOUR_NEYNAR_CLIENT_ID', // Get from https://dev.neynar.com
             MAX_SCORE: 999999,
-            MIN_GAME_DURATION: 5000,
-            MAX_SUBMISSIONS_PER_HOUR: 10
+            MIN_GAME_DURATION: 5000
         };
 
-        let farcasterSDK = null;
         let ethersProvider = null;
         let currentUser = null;
         let vaultContract = null;
@@ -260,10 +260,8 @@
         let gameStartTime = null;
         let isProcessingPayment = false;
         let countdownInterval = null;
-        let sessionToken = null;
-        let submissionCount = 0;
-        let leaderboardData = [];
-        let score = 0; // single global declaration, remove duplicates
+        let score = 0;
+        let neynarUser = null;
 
         const VAULT_ABI = [
             "function payEntry() external",
@@ -271,7 +269,6 @@
             "function getCurrentRound() view returns (uint256, uint256, uint256, uint256, bool)",
             "function getPlayerScore(address) view returns (uint256)",
             "function getTopPlayers(uint256) view returns (address[],uint256[])",
-            "function claimPrize(uint256) external",
             "function estimatePayout(uint256) view returns (uint256)"
         ];
 
@@ -281,222 +278,278 @@
             "function allowance(address owner, address spender) view returns (uint256)"
         ];
 
-        // Unified app init: try Farcaster, then fallback to MetaMask
+        // ============================================
+        // NEYNAR MINI APP AUTH + METAMASK
+        // ============================================
+
         async function initApp() {
+            console.log('🚀 Initializing Far Meow...');
+
             if (typeof ethers === 'undefined') {
-                console.error('Ethers.js not loaded');
+                console.error('❌ Ethers.js not loaded');
                 document.getElementById('farcasterStatus').textContent = 'LOAD ERROR';
                 return;
             }
 
-            // 1) Try Farcaster frame
-            const frame = window.frameSDK;
-            if (frame) {
+            // Try to load Neynar user from localStorage (persisted from previous auth)
+            const savedUser = localStorage.getItem('neynarUser');
+            if (savedUser) {
                 try {
-                    farcasterSDK = frame;
-                    const context = await frame.context;
-                    currentUser = context.user || null;
-
-                    if (!currentUser) {
-                        document.getElementById('farcasterStatus').textContent = 'LOGIN REQUIRED';
-                    } else {
-                        document.getElementById('farcasterStatus').textContent = `@${currentUser.username}`;
-                    }
-
-                    if (frame.wallet?.ethProvider) {
-                        ethersProvider = new ethers.providers.Web3Provider(frame.wallet.ethProvider);
-                        await ensureBaseNetwork();
-                        await initContracts();
-                        await postWalletInit();
-                        return;
-                    }
+                    neynarUser = JSON.parse(savedUser);
+                    console.log('✅ Loaded saved Neynar user:', neynarUser.username);
+                    currentUser = {
+                        address: null, // Will be set when wallet connects
+                        username: neynarUser.username,
+                        fid: neynarUser.fid,
+                        signer: neynarUser.signer
+                    };
                 } catch (e) {
-                    console.warn('Farcaster init failed, will fallback to MetaMask', e);
+                    console.warn('Could not parse saved user', e);
+                    localStorage.removeItem('neynarUser');
                 }
             }
 
-            // 2) Web fallback: show CONNECT WALLET button
-            const statusEl = document.getElementById('farcasterStatus');
-            statusEl.innerHTML = `<button onclick="connectWebWallet()" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white font-bold text-xs">CONNECT</button>`;
+            // Show auth options
+            showAuthOptions();
         }
 
-        async function connectWebWallet() {
+        function showAuthOptions() {
+            const statusEl = document.getElementById('farcasterStatus');
+            
+            if (currentUser?.fid) {
+                // Already have Farcaster user, just need wallet
+                statusEl.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span>@${currentUser.username}</span>
+                        <button onclick="connectMetaMask()" class="px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white font-bold text-xs">WALLET</button>
+                    </div>
+                `;
+            } else {
+                // Show both options
+                statusEl.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <button onclick="authenticateNeynar()" class="px-3 py-1 bg-purple-600 hover:bg-purple-500 rounded text-white font-bold text-xs">FARCASTER</button>
+                        <button onclick="connectMetaMask()" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white font-bold text-xs">WALLET</button>
+                    </div>
+                `;
+            }
+        }
+
+        // ============================================
+        // NEYNAR MINI APP AUTHENTICATION
+        // ============================================
+
+        async function authenticateNeynar() {
             try {
-                if (!window.ethereum) {
-                    alert('Install MetaMask or Coinbase Wallet to play.');
-                    window.open('https://metamask.io/download/', '_blank');
+                console.log('📱 Opening Neynar Mini App Auth...');
+                
+                if (!CONFIG.NEYNAR_CLIENT_ID || CONFIG.NEYNAR_CLIENT_ID === 'YOUR_NEYNAR_CLIENT_ID') {
+                    alert('Neynar client ID not configured');
                     return;
                 }
 
-                await window.ethereum.request({ method: 'eth_requestAccounts' });
-                ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
+                // Call backend to initiate auth flow
+                const response = await fetch(`${CONFIG.API_ENDPOINT}/neynar/auth-url`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        clientId: CONFIG.NEYNAR_CLIENT_ID,
+                        redirectUrl: window.location.href
+                    })
+                });
 
-                // Create a basic user object for web (no FID)
-                const signer = ethersProvider.getSigner();
-                const address = await signer.getAddress();
-                currentUser = {
-                    address,
-                    username: `${address.slice(0, 6)}...${address.slice(-4)}`
-                };
-                document.getElementById('farcasterStatus').textContent = currentUser.username;
+                if (!response.ok) {
+                    throw new Error('Failed to get auth URL');
+                }
 
-                await ensureBaseNetwork();
-                await initContracts();
-                await postWalletInit();
-            } catch (e) {
-                console.error('Web wallet connection failed', e);
-                alert('Failed to connect wallet: ' + (e.message || e));
+                const { authUrl } = await response.json();
+                console.log('🔗 Redirecting to Neynar auth...');
+                
+                // Redirect to Neynar auth
+                window.location.href = authUrl;
+
+            } catch (error) {
+                console.error('❌ Neynar auth failed:', error);
+                alert(`Auth failed: ${error.message}`);
             }
         }
 
-        async function ensureBaseNetwork() {
-            const network = await ethersProvider.getNetwork();
-            if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
-                if (window.ethereum?.request) {
-                    try {
-                        await window.ethereum.request({
-                            method: 'wallet_switchEthereumChain',
-                            params: [{ chainId: '0x14a34' }] // 84532
-                        });
-                    } catch (switchError) {
-                        if (switchError.code === 4902) {
-                            await window.ethereum.request({
-                                method: 'wallet_addEthereumChain',
-                                params: [{
-                                    chainId: '0x14a34',
-                                    chainName: 'Base Sepolia',
-                                    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
-                                    rpcUrls: ['https://sepolia.base.org'],
-                                    blockExplorerUrls: ['https://sepolia.basescan.org']
-                                }]
-                            });
-                        } else {
-                            throw switchError;
-                        }
-                    }
+        // Handle Neynar callback
+        async function handleNeynarCallback() {
+            console.log('🔄 Processing Neynar callback...');
+
+            const params = new URLSearchParams(window.location.search);
+            const code = params.get('code');
+            const state = params.get('state');
+
+            if (!code) {
+                console.log('No auth code in URL');
+                return;
+            }
+
+            try {
+                // Exchange code for token with backend
+                const response = await fetch(`${CONFIG.API_ENDPOINT}/neynar/token`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code, state })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Token exchange failed');
+                }
+
+                const { user } = await response.json();
+                console.log('✅ Neynar auth successful:', user);
+
+                neynarUser = user;
+                currentUser = {
+                    address: null,
+                    username: user.username,
+                    fid: user.fid,
+                    signer: user.signer
+                };
+
+                // Save to localStorage
+                localStorage.setItem('neynarUser', JSON.stringify(neynarUser));
+
+                // Clean URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+
+                // Now connect wallet
+                showAuthOptions();
+                console.log('✅ Ready to connect wallet');
+
+            } catch (error) {
+                console.error('❌ Callback processing failed:', error);
+                alert(`Callback error: ${error.message}`);
+            }
+        }
+
+        // ============================================
+        // METAMASK WALLET CONNECTION
+        // ============================================
+
+        async function connectMetaMask() {
+            try {
+                console.log('🔄 Connecting MetaMask...');
+
+                if (!window.ethereum) {
+                    alert('MetaMask required: https://metamask.io/download/');
+                    return;
+                }
+
+                // Request accounts
+                const accounts = await window.ethereum.request({
+                    method: 'eth_requestAccounts'
+                });
+
+                if (!accounts?.length) {
+                    throw new Error('No accounts returned');
+                }
+
+                const address = accounts[0];
+                console.log('✅ Connected:', address);
+
+                // Update user
+                if (!currentUser) {
+                    currentUser = {
+                        address,
+                        username: `${address.slice(0, 6)}...${address.slice(-4)}`
+                    };
                 } else {
-                    alert('Wrong network. Please switch to Base Sepolia.');
-                    throw new Error('Wrong network');
+                    currentUser.address = address;
+                }
+
+                document.getElementById('farcasterStatus').textContent = 
+                    currentUser.fid ? `@${currentUser.username}` : currentUser.username;
+
+                // Create provider
+                ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
+
+                // Check/switch network
+                const network = await ethersProvider.getNetwork();
+                console.log('📡 Chain ID:', network.chainId);
+
+                if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
+                    await switchNetwork();
+                }
+
+                // Initialize contracts
+                const signer = ethersProvider.getSigner();
+                vaultContract = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signer);
+                usdcContract = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signer);
+
+                console.log('✅ Contracts initialized');
+
+                // Load data
+                await loadVaultData();
+                await updateBalance();
+                await loadLeaderboard();
+
+                // Polling
+                setInterval(loadVaultData, 10000);
+                setInterval(updateBalance, 30000);
+                setInterval(loadLeaderboard, 15000);
+
+                console.log('✅ Ready to play!');
+
+            } catch (error) {
+                console.error('❌ MetaMask connection failed:', error);
+                alert(`Error: ${error.message}`);
+                showAuthOptions();
+            }
+        }
+
+        async function switchNetwork() {
+            try {
+                await window.ethereum.request({
+                    method: 'wallet_switchEthereumChain',
+                    params: [{ chainId: '0x14a34' }]
+                });
+                console.log('✅ Network switched');
+            } catch (switchError) {
+                if (switchError.code === 4902) {
+                    console.log('📦 Adding Base Sepolia...');
+                    await window.ethereum.request({
+                        method: 'wallet_addEthereumChain',
+                        params: [{
+                            chainId: '0x14a34',
+                            chainName: 'Base Sepolia',
+                            nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
+                            rpcUrls: ['https://sepolia.base.org'],
+                            blockExplorerUrls: ['https://sepolia.basescan.org']
+                        }]
+                    });
+                } else {
+                    throw switchError;
                 }
             }
         }
 
-        async function initContracts() {
-            if (!CONFIG.VAULT_CONTRACT || CONFIG.VAULT_CONTRACT === '0x...') {
-                document.getElementById('farcasterStatus').textContent = 'CONFIG ERROR';
-                throw new Error('VAULT_CONTRACT not configured');
-            }
-            const signer = ethersProvider.getSigner();
-            vaultContract = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signer);
-            usdcContract = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signer);
-        }
+        // ============================================
+        // ON-CHAIN DATA LOADING
+        // ============================================
 
-        async function postWalletInit() {
-            // For now, verification remains via backend if running in Farcaster.
-            // On pure web, backend can still verify by address only.
-            await verifyPlayer();
-            await loadVaultData();
-            await updateBalance();
-            await loadLeaderboard();
-
-            setInterval(loadVaultData, 10000);
-            setInterval(updateBalance, 30000);
-            setInterval(loadLeaderboard, 15000);
-        }
-
-        // Verify player with backend; no on-chain verify here
-        async function verifyPlayer() {
-            if (!currentUser || !ethersProvider || !CONFIG.API_ENDPOINT) return;
-            try {
-                const address = await ethersProvider.getSigner().getAddress();
-                if (!ethers.utils.isAddress(address)) throw new Error('Invalid wallet address');
-
-                const body = {
-                    address,
-                    username: currentUser.username,
-                };
-                if (currentUser.fid) body.fid = currentUser.fid;
-
-                const resp = await fetch(`${CONFIG.API_ENDPOINT}/verify-player`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                if (!resp.ok) throw new Error(`Verification failed: ${resp.status}`);
-                console.log('✅ Player verified:', await resp.json());
-            } catch (err) {
-                console.error('❌ Verification failed:', err);
-            }
-        }
-
-        // Load vault data from contract
         async function loadVaultData() {
             if (!vaultContract) return;
             try {
                 const roundData = await vaultContract.getCurrentRound();
-                
-                // REMOVED: isActive check (not in ABI return type)
-                
                 currentRoundId = roundData[0].toNumber();
                 const vaultAmount = ethers.utils.formatUnits(roundData[1], 6);
                 const timeRemaining = roundData[3].toNumber();
-                
-                currentPot = Number.isFinite(parseFloat(vaultAmount))
-                    ? parseFloat(vaultAmount)
-                    : 0;
-
+                currentPot = parseFloat(vaultAmount) || 0;
                 const potDisplay = Math.floor(currentPot).toLocaleString();
                 document.getElementById('potValue').textContent = potDisplay;
                 document.getElementById('potValueSmall').textContent = potDisplay;
-                
                 startCountdown(timeRemaining);
                 updatePayoutEstimates(currentPot);
-                
+                console.log('✅ Vault data loaded');
             } catch (error) {
-                console.error('❌ Load vault data failed:', error);
+                console.error('❌ loadVaultData failed:', error);
             }
         }
 
-        // Start actual countdown timer
-        function startCountdown(seconds) {
-            if (countdownInterval) clearInterval(countdownInterval);
-            
-            let remaining = seconds;
-            
-            const updateDisplay = () => {
-                if (remaining <= 0) {
-                    clearInterval(countdownInterval);
-                    document.getElementById('countDown').textContent = '00:00';
-                    return;
-                }
-                
-                const minutes = Math.floor(remaining / 60);
-                const secs = remaining % 60;
-                document.getElementById('countDown').textContent = 
-                    `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                
-                remaining--;
-            };
-            
-            updateDisplay();
-            countdownInterval = setInterval(updateDisplay, 1000);
-        }
-
-        // Update payout estimates
-        function updatePayoutEstimates(vaultAmount) {
-            const vault = parseFloat(vaultAmount);
-            if (!Number.isFinite(vault)) return;
-
-            const elems = document.querySelectorAll('.grid .text-white.font-bold');
-            if (elems.length < 3) return;
-
-            // Match Solidity: 1st = 25.5%, 10th = 2.5%, 20th = 2.5%
-            elems[0].textContent = `$${Math.floor(vault * 0.255)}`; // 1st Place
-            elems[1].textContent = `$${Math.floor(vault * 0.025)}`; // 10th Place (2.5%)
-            elems[2].textContent = `$${Math.floor(vault * 0.025)}`; // 20th Place (2.5%)
-        }
-
-        // Update USDC balance
         async function updateBalance() {
             if (!usdcContract || !ethersProvider) return;
             try {
@@ -504,883 +557,188 @@
                 const address = await signer.getAddress();
                 const balance = await usdcContract.balanceOf(address);
                 const formatted = ethers.utils.formatUnits(balance, 6);
-                const num = parseFloat(formatted);
-                const safe = Number.isFinite(num) ? num : 0;
-                document.getElementById('walletBalance').textContent = `${safe.toFixed(2)} USDC`;
+                const num = parseFloat(formatted) || 0;
+                document.getElementById('walletBalance').textContent = `${num.toFixed(2)} USDC`;
             } catch (error) {
-                console.error('❌ Balance update failed:', error);
+                console.error('❌ updateBalance failed:', error);
             }
         }
 
-        // Load leaderboard data
         async function loadLeaderboard() {
-            try {
-                const response = await fetch(`${CONFIG.API_ENDPOINT}/leaderboard?limit=100`);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                
-                const data = await response.json();
-                leaderboardData = Array.isArray(data.players) ? data.players : [];
-                
-                renderLeaderboard();
-                
-            } catch (error) {
-                console.error('❌ Leaderboard load failed:', error);
+            if (!CONFIG.API_ENDPOINT) {
                 document.getElementById('leaderboardList').innerHTML = 
-                    '<div class="text-center py-8 text-red-400 text-sm">Failed to load leaderboard</div>';
-            }
-        }
-
-        // Refresh leaderboard with animation
-        async function refreshLeaderboard() {
-            const icon = document.getElementById('refreshIcon');
-            icon.style.transform = 'rotate(360deg)';
-            icon.style.transition = 'transform 0.5s ease';
-            
-            await loadLeaderboard();
-            
-            setTimeout(() => {
-                icon.style.transform = 'rotate(0deg)';
-            }, 500);
-        }
-
-        // Render leaderboard UI
-        function renderLeaderboard() {
-            const container = document.getElementById('leaderboardList');
-            
-            if (!leaderboardData || leaderboardData.length === 0) {
-                container.innerHTML = 
-                    '<div class="text-center py-8 text-cyan-400 text-sm">No players yet. Be the first!</div>';
+                    '<div class="text-center py-8 text-cyan-400 text-sm">API not configured</div>';
                 return;
             }
-            
+            try {
+                const response = await fetch(`${CONFIG.API_ENDPOINT}/leaderboard?limit=20`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                renderLeaderboard(Array.isArray(data.players) ? data.players : []);
+            } catch (error) {
+                console.error('❌ loadLeaderboard failed:', error);
+                document.getElementById('leaderboardList').innerHTML = 
+                    '<div class="text-center py-8 text-yellow-400 text-sm">Backend offline</div>';
+            }
+        }
+
+        function renderLeaderboard(players) {
+            const container = document.getElementById('leaderboardList');
+            if (!players?.length) {
+                container.innerHTML = '<div class="text-center py-8 text-cyan-400 text-sm">No players yet</div>';
+                return;
+            }
             let html = '';
-            
-            leaderboardData.forEach((player, index) => {
-                const rank = index + 1;
-                const rankClass = rank === 1 ? 'rank-1' : 
-                                 rank === 2 ? 'rank-2' : 
-                                 rank === 3 ? 'rank-3' : 'rank-other';
-                
+            players.slice(0, 20).forEach((player, i) => {
+                const rank = i + 1;
+                const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-other';
                 const score = Number(player.score) || 0;
                 const payout = Number(player.estimatedPayout) || 0;
-                // Sanitize username to prevent XSS
-                const name = (player.username || player.address?.slice(0, 6) || 'Anonymous').replace(/[<>]/g, '');
-                
-                // Highlight current user
-                const isCurrentUser = currentUser && (
-                    player.fid === currentUser.fid || 
-                    player.username === currentUser.username
-                );
-                const highlightClass = isCurrentUser ? 'bg-cyan-900/30 border border-cyan-500/50' : '';
-                
+                const name = (player.username || 'Player').replace(/[<>]/g, '');
                 html += `
-                    <div class="leaderboard-row flex items-center justify-between p-2 rounded-lg ${highlightClass}">
+                    <div class="leaderboard-row flex items-center justify-between p-2 rounded-lg">
                         <div class="flex items-center gap-3 flex-1 min-w-0">
-                            <div class="rank-badge ${rankClass} text-xs flex-shrink-0">
-                                ${rank}
-                            </div>
+                            <div class="rank-badge ${rankClass} text-xs flex-shrink-0">${rank}</div>
                             <div class="flex-1 min-w-0">
-                                <div class="text-white font-bold text-sm truncate">
-                                    ${isCurrentUser ? '👤 ' : ''}${name}
-                                </div>
-                                <div class="text-cyan-400 text-xs">
-                                    ${score.toLocaleString()} pts
-                                </div>
+                                <div class="text-white font-bold text-sm truncate">${name}</div>
+                                <div class="text-cyan-400 text-xs">${score.toLocaleString()} pts</div>
                             </div>
                         </div>
-                        <div class="text-right flex-shrink-0">
-                            <div class="text-yellow-400 font-bold text-sm">
-                                ${payout > 0 ? `$${payout.toFixed(2)}` : '-'}
-                            </div>
-                        </div>
+                        <div class="text-yellow-400 font-bold text-sm">$${payout.toFixed(2)}</div>
                     </div>
                 `;
             });
-            
             container.innerHTML = html;
         }
 
-        // Initiate payment and game start
+        function startCountdown(seconds) {
+            if (countdownInterval) clearInterval(countdownInterval);
+            let remaining = Math.max(seconds, 0);
+            const update = () => {
+                const m = Math.floor(remaining / 60);
+                const s = remaining % 60;
+                document.getElementById('countDown').textContent =
+                    `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+                remaining--;
+                if (remaining < 0) clearInterval(countdownInterval);
+            };
+            update();
+            countdownInterval = setInterval(update, 1000);
+        }
+
+        function updatePayoutEstimates(vault) {
+            const v = parseFloat(vault) || 0;
+            const elems = document.querySelectorAll('.grid .text-white.font-bold');
+            if (elems.length >= 3) {
+                elems[0].textContent = `$${Math.floor(v * 0.255)}`;
+                elems[1].textContent = `$${Math.floor(v * 0.025)}`;
+                elems[2].textContent = `$${Math.floor(v * 0.025)}`;
+            }
+        }
+
+        // ============================================
+        // GAME PAYMENT
+        // ============================================
+
         async function initiatePayment() {
             if (isProcessingPayment) return;
             if (!ethersProvider || !vaultContract || !usdcContract) {
-                alert('Connect a wallet first.');
+                alert('Connect wallet first');
                 return;
             }
             if (!currentRoundId) {
-                alert('No active round. Please wait for the next round.');
+                alert('No active round');
                 return;
             }
-
             isProcessingPayment = true;
-
             document.getElementById('landingScreen').classList.remove('active-screen');
             document.getElementById('landingScreen').classList.add('hidden-screen');
-            document.getElementById('gameOverScreen').classList.remove('active-screen');
-            document.getElementById('gameOverScreen').classList.add('hidden-screen');
-
             const payScreen = document.getElementById('paymentScreen');
             payScreen.classList.remove('hidden-screen');
             payScreen.classList.add('active-screen');
-
             try {
                 const signer = ethersProvider.getSigner();
                 const address = await signer.getAddress();
-                if (!ethers.utils.isAddress(address)) throw new Error('Invalid wallet address');
-
                 const balance = await usdcContract.balanceOf(address);
                 if (balance.lt(CONFIG.ENTRY_FEE)) {
-                    throw new Error('Insufficient USDC balance. You need at least 0.25 USDC.');
+                    throw new Error('Insufficient USDC (need 0.25)');
                 }
-
                 const allowance = await usdcContract.allowance(address, CONFIG.VAULT_CONTRACT);
                 if (allowance.lt(CONFIG.ENTRY_FEE)) {
-                    const approveAmount = ethers.BigNumber.from(CONFIG.ENTRY_FEE).mul(10);
-                    const gasEstimate = await usdcContract.estimateGas.approve(CONFIG.VAULT_CONTRACT, approveAmount);
                     const approveTx = await usdcContract.approve(
                         CONFIG.VAULT_CONTRACT,
-                        approveAmount,
-                        { gasLimit: gasEstimate.mul(120).div(100) }
+                        ethers.utils.parseUnits('100', 6)
                     );
                     await approveTx.wait(1);
                 }
-
-                const gasEstimate = await vaultContract.estimateGas.payEntry();
-                const tx = await vaultContract.payEntry({ gasLimit: gasEstimate.mul(120).div(100) });
+                const tx = await vaultContract.payEntry();
                 const receipt = await tx.wait(1);
                 if (receipt.status !== 1) throw new Error('Transaction failed');
-
-                console.log('✅ Payment successful:', receipt.transactionHash);
-
-                // Backend session (optional; only if API is configured)
-                if (CONFIG.API_ENDPOINT && currentUser) {
-                    const sessionResponse = await fetch(`${CONFIG.API_ENDPOINT}/create-session`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            fid: currentUser.fid,
-                            address,
-                            txHash: receipt.transactionHash,
-                            roundId: currentRoundId
-                        })
-                    });
-                    if (sessionResponse.ok) {
-                        const sessionData = await sessionResponse.json();
-                        sessionToken = sessionData.token;
-                    }
-                }
-
                 await updateBalance();
-
                 setTimeout(() => {
                     payScreen.classList.remove('active-screen');
                     payScreen.classList.add('hidden-screen');
                     isProcessingPayment = false;
                     startGame();
-                }, 800);
-                
+                }, 500);
             } catch (error) {
-                console.error('❌ Payment failed:', error);
-                alert(error.message || 'Payment failed. Please try again.');
-
+                alert(`Payment failed: ${error.message}`);
                 payScreen.classList.remove('active-screen');
                 payScreen.classList.add('hidden-screen');
                 document.getElementById('landingScreen').classList.add('active-screen');
                 document.getElementById('landingScreen').classList.remove('hidden-screen');
-                
                 isProcessingPayment = false;
             }
         }
 
-        // Submit score to backend and smart contract
-        async function submitScore(finalScore) {
-            // Rate limiting
-            if (submissionCount >= CONFIG.MAX_SUBMISSIONS_PER_HOUR) {
-                console.error('❌ Rate limit exceeded');
-                return { rank: '--', payout: '0.00' };
-            }
-
-            // Anti-cheat checks
-            const gameDuration = Date.now() - gameStartTime;
-            if (gameDuration < CONFIG.MIN_GAME_DURATION) {
-                console.error('❌ Game too short, likely cheating');
-                return { rank: '--', payout: '0.00' };
-            }
-
-            if (finalScore > CONFIG.MAX_SCORE || finalScore < 0) {
-                console.error('❌ Invalid score range');
-                return { rank: '--', payout: '0.00' };
-            }
-
-            // Sanitize score
-            const sanitizedScore = Math.floor(Number(finalScore));
-            if (!Number.isFinite(sanitizedScore)) {
-                return { rank: '--', payout: '0.00' };
-            }
-            
-            try {
-                const secret = ethers.utils.randomBytes(32);
-                const secretHex = ethers.utils.hexlify(secret);
-                const commitment = ethers.utils.keccak256(
-                    ethers.utils.defaultAbiCoder.encode(['uint256', 'bytes32'], [sanitizedScore, secretHex])
-                );
-                const address = await ethersProvider.getSigner().getAddress();
-
-                // Commit on-chain
-                const commitTx = await vaultContract.commitScore(commitment);
-                await commitTx.wait(1);
-
-                // If backend available, reveal there
-                if (CONFIG.API_ENDPOINT && currentUser) {
-                    const resp = await fetch(`${CONFIG.API_ENDPOINT}/submit-score`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {})
-                        },
-                        body: JSON.stringify({
-                            fid: currentUser.fid,
-                            address,
-                            score: sanitizedScore,
-                            secret: secretHex,
-                            commitment,
-                            roundId: currentRoundId,
-                            gameDuration,
-                            timestamp: Date.now()
-                        })
-                    });
-                    if (!resp.ok) return { rank: '--', payout: '0.00' };
-                    const data = await resp.json().catch(() => ({}));
-                    const rank = Number.isFinite(Number(data.rank)) ? Number(data.rank) : 99;
-
-                    let payout = '0.00';
-                    if (rank > 0 && rank <= 20) {
-                        const payoutRaw = await vaultContract.estimatePayout(rank - 1);
-                        payout = ethers.utils.formatUnits(payoutRaw, 6);
-                    }
-
-                    submissionCount++;
-                    return { rank, payout };
-                }
-
-                // No backend: just commit, no rank
-                submissionCount++;
-                return { rank: '--', payout: '0.00' };
-            } catch (err) {
-                console.error('❌ Score submission failed:', err);
-                return { rank: '--', payout: '0.00' };
-            }
-        }
-
-        // SIMPLIFIED: Share result via Warpcast only
-        async function shareResult() {
-            const safeScore = Number.isFinite(score) ? score : 0;
-            const safePot = Number.isFinite(currentPot) ? Math.floor(currentPot) : 0;
-            const shareText = `I just scored ${safeScore} points in Far Meow! 🐱⚡\n\nCompete for the $${safePot} prize pool!`;
-            const embedUrl = 'https://far-meow.app';
-            
-            // Warpcast compose URL
-            const warpcastUrl = `https://warpcast.com/~/compose?text=${encodeURIComponent(shareText)}&embeds%5B%5D=${encodeURIComponent(embedUrl)}`;
-
-            // Try SDK first, then fallback
-            if (farcasterSDK?.actions?.openUrl) {
-                try {
-                    await farcasterSDK.actions.openUrl(warpcastUrl);
-                    return;
-                } catch (e) {
-                    console.warn('SDK failed', e);
-                }
-            }
-
-            // Fallback: open in new window
-            window.open(warpcastUrl, '_blank', 'noopener,noreferrer');
-        }
-
-        // --- OPTIMIZED NEON SPRITE GENERATOR (The Secret Sauce) ---
-        // We draw complex glows ONCE into an offscreen canvas, then just draw that image.
-        const sprites = {};
-
-        function createOffscreenSprite(width, height, drawFn) {
-            const c = document.createElement('canvas');
-            c.width = width;
-            c.height = height;
-            const ctx = c.getContext('2d');
-            drawFn(ctx, width, height);
-            return c;
-        }
-
-        function initSprites() {
-            // 1. NEON CAT (64x64)
-            sprites.cat = createOffscreenSprite(80, 80, (ctx, w, h) => {
-                const cx = w/2, cy = h/2;
-                
-                // Outer Glow (Baked in)
-                ctx.shadowBlur = 20;
-                ctx.shadowColor = '#06b6d4'; // Cyan Glow
-                
-                // Body
-                ctx.fillStyle = '#e0f2fe'; // Almost white
-                ctx.beginPath(); 
-                ctx.ellipse(cx, cy+5, 18, 14, 0, 0, Math.PI*2); 
-                ctx.fill();
-
-                // Head
-                ctx.beginPath(); 
-                ctx.arc(cx, cy-10, 14, 0, Math.PI*2); 
-                ctx.fill();
-
-                // Ears
-                ctx.beginPath();
-                ctx.moveTo(cx-12, cy-18); ctx.lineTo(cx-16, cy-28); ctx.lineTo(cx-4, cy-20);
-                ctx.moveTo(cx+12, cy-18); ctx.lineTo(cx+16, cy-28); ctx.lineTo(cx+4, cy-20);
-                ctx.fill();
-                
-                // Turn off heavy shadow for details
-                ctx.shadowBlur = 0;
-                
-                // Helmet (Semi-transparent)
-                ctx.fillStyle = 'rgba(103, 232, 249, 0.3)';
-                ctx.strokeStyle = 'rgba(103, 232, 249, 0.8)';
-                ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.arc(cx, cy-10, 18, 0, Math.PI*2); 
-                ctx.fill(); ctx.stroke();
-
-                // Face Details
-                ctx.fillStyle = '#083344';
-                ctx.beginPath(); ctx.arc(cx-5, cy-10, 2, 0, Math.PI*2); ctx.arc(cx+5, cy-10, 2, 0, Math.PI*2); ctx.fill(); // Eyes
-                
-                // Jetpack
-                ctx.fillStyle = '#f472b6'; // Pink
-                ctx.fillRect(cx-12, cy, 4, 10);
-                ctx.fillRect(cx+8, cy, 4, 10);
-            });
-
-            // 2. NEON FISH (Coin)
-            sprites.fish = createOffscreenSprite(60, 60, (ctx, w, h) => {
-                const cx = w/2, cy = h/2;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#fbbf24'; // Amber glow
-                
-                ctx.strokeStyle = '#fbbf24';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.arc(cx, cy, 12, 0, Math.PI*2); // Coin shape
-                ctx.stroke();
-                
-                ctx.fillStyle = '#fbbf24';
-                ctx.font = 'bold 16px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('$', cx, cy+1);
-            });
-
-            // 3. NEON OBSTACLE (Triangle)
-            sprites.obstacle = createOffscreenSprite(60, 60, (ctx, w, h) => {
-                const cx = w/2, cy = h/2;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#f43f5e'; // Rose glow
-                
-                ctx.strokeStyle = '#f43f5e';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(cx, cy-20);
-                ctx.lineTo(cx+18, cy+15);
-                ctx.lineTo(cx-18, cy+15);
-                ctx.closePath();
-                ctx.stroke();
-                
-                // Inner fill opacity
-                ctx.fillStyle = 'rgba(244, 63, 94, 0.2)';
-                ctx.fill();
-            });
-        }
-
         // ============================================
-        // OPTIMIZED GAME ENGINE
+        // GAME ENGINE (minimal stub)
         // ============================================
 
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d', { 
-            alpha: false, 
-            desynchronized: true, // Better performance
-            willReadFrequently: false 
-        });
-        
-        let cw, ch, laneWidth;
-        
-        let gameState = 'MENU'; 
-        let frameId;
-        let lastTime = 0;
-        let gameSpeed = 300;
-        let lastLeaderboardUpdate = 0;
-        let currentRank = '--';
-        
-        let player;
-        let obstacles = [];
-        let collectibles = [];
-        let particles = [];
-        let backgroundOffset = 0;
-        
-        // Colors
-        const colors = {
-            bg: '#050510', 
-            grid: '#1e293b',
-            gridLight: '#0ea5e9'
-        };
-
-        let touchStartX = 0;
-        let touchStartY = 0;
-        
-        window.addEventListener('resize', resizeCanvas);
-        document.addEventListener('keydown', handleInput);
-        
-        canvas.addEventListener('touchstart', e => {
-            touchStartX = e.changedTouches[0].screenX;
-            touchStartY = e.changedTouches[0].screenY;
-        }, {passive: false});
-        
-        canvas.addEventListener('touchend', e => {
-            if (gameState !== 'PLAYING') return;
-            const touchEndX = e.changedTouches[0].screenX;
-            const touchEndY = e.changedTouches[0].screenY;
-            const dx = touchEndX - touchStartX;
-            const dy = touchEndY - touchStartY;
-            
-            if (Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-                player.jump(); return;
-            }
-            if (Math.abs(dx) > Math.abs(dy)) {
-                if (Math.abs(dx) > 20) {
-                    if (dx > 0) player.moveRight();
-                    else player.moveLeft();
-                }
-            } else {
-                if (dy < -20) player.jump();
-            }
-        }, {passive: false});
-
-        function handleInput(e) {
-            if (gameState !== 'PLAYING') return;
-            if (e.key === 'ArrowLeft') player.moveLeft();
-            if (e.key === 'ArrowRight') player.moveRight();
-            if (e.key === 'ArrowUp' || e.key === ' ') player.jump();
-        }
-
-        function resizeCanvas() {
-            cw = window.innerWidth;
-            ch = window.innerHeight - 48;
-            canvas.width = cw;
-            canvas.height = ch;
-            
-            const maxPlayWidth = 600;
-            const actualPlayWidth = Math.min(cw, maxPlayWidth);
-            laneWidth = actualPlayWidth / 3;
-        }
-
-        // --- Classes ---
-
-        class Player {
-            constructor() { this.reset(); }
-            reset() {
-                this.lane = 1;
-                this.targetLane = 1;
-                this.laneX = this.getLaneCenter(1);
-                this.x = this.laneX;
-                this.y = ch - ch * 0.2; 
-                this.jumping = false;
-                this.jumpHeight = 0;
-                this.jumpVel = 0;
-                this.jumpGravity = 1200;
-                this.jumpForce = 600;
-                this.bobPhase = 0;
-            }
-            getLaneCenter(laneIndex) {
-                const totalWidth = Math.min(cw, 600);
-                const margin = (cw - totalWidth) / 2;
-                return margin + (laneIndex * laneWidth) + (laneWidth / 2);
-            }
-            moveLeft() { if (this.targetLane > 0) this.targetLane--; }
-            moveRight() { if (this.targetLane < 2) this.targetLane++; }
-            jump() { if (!this.jumping) { this.jumping = true; this.jumpVel = -this.jumpForce; } }
-            
-            update(dt) {
-                const targetX = this.getLaneCenter(this.targetLane);
-                this.x += (targetX - this.x) * 15 * dt; 
-
-                if (this.jumping) {
-                    this.jumpVel += this.jumpGravity * dt;
-                    this.jumpHeight -= this.jumpVel * dt; 
-                    if (this.jumpHeight <= 0) {
-                        this.jumpHeight = 0;
-                        this.jumping = false;
-                        spawnParticles(this.x, this.y, 'dust', 4);
-                    }
-                }
-                this.bobPhase += 10 * dt;
-            }
-
-            draw(ctx) {
-                const yOffset = -this.jumpHeight;
-                const bob = this.jumping ? 0 : Math.sin(this.bobPhase) * 5;
-                
-                // Draw cached sprite centered
-                const size = 80; 
-                ctx.drawImage(sprites.cat, this.x - size/2, this.y + yOffset + bob - size/2);
-                
-                // Engine Flame if jumping
-                if (this.jumping) {
-                    ctx.fillStyle = '#f472b6';
-                    ctx.globalAlpha = 0.7;
-                    const flameH = Math.random() * 20 + 10;
-                    ctx.beginPath();
-                    ctx.ellipse(this.x - 12, this.y + yOffset + 15, 3, flameH, 0, 0, Math.PI*2);
-                    ctx.ellipse(this.x + 8, this.y + yOffset + 15, 3, flameH, 0, 0, Math.PI*2);
-                    ctx.fill();
-                    ctx.globalAlpha = 1.0;
-                }
-            }
-        }
-
-        class Obstacle {
-            constructor() { this.active = false; }
-            spawn(laneIndex) {
-                this.laneIndex = laneIndex;
-                this.x = player.getLaneCenter(laneIndex);
-                this.y = -100;
-                this.active = true;
-            }
-            update(dt) {
-                this.y += gameSpeed * dt;
-                if (this.y > ch + 100) this.active = false;
-            }
-            draw(ctx) {
-                const size = 60;
-                ctx.drawImage(sprites.obstacle, this.x - size/2, this.y - size/2);
-            }
-        }
-
-        class Collectible {
-            constructor() { this.active = false; }
-            spawn(laneIndex) {
-                this.laneIndex = laneIndex;
-                this.x = player.getLaneCenter(laneIndex);
-                this.y = -100;
-                this.active = true;
-                this.bobOffset = Math.random() * 10;
-            }
-            update(dt) {
-                this.y += gameSpeed * dt;
-                if (this.y > ch + 100) this.active = false;
-            }
-            draw(ctx) {
-                const bob = Math.sin(Date.now() / 200 + this.bobOffset) * 5;
-                const size = 60;
-                ctx.drawImage(sprites.fish, this.x - size/2, this.y - size/2 + bob);
-            }
-        }
-
-        class Particle {
-            constructor() { this.active = false; }
-            spawn(x, y, type) {
-                this.x = x; this.y = y;
-                const angle = Math.random() * Math.PI * 2;
-                const speed = Math.random() * 100 + 50;
-                this.vx = Math.cos(angle) * speed;
-                this.vy = Math.sin(angle) * speed;
-                this.life = 1.0;
-                this.color = type === 'dust' ? '#22d3ee' : '#fbbf24';
-                this.active = true;
-            }
-            update(dt) {
-                this.x += this.vx * dt;
-                this.y += this.vy * dt;
-                this.life -= 3 * dt;
-                if (this.life <= 0) this.active = false;
-            }
-            draw(ctx) {
-                ctx.globalAlpha = this.life;
-                ctx.fillStyle = this.color;
-                ctx.fillRect(this.x, this.y, 3, 3); // Simple squares are fastest
-                ctx.globalAlpha = 1.0;
-            }
-        }
-
-        // --- Pooling ---
-        const obstaclePool = [];
-        const collectiblePool = [];
-        const particlePool = [];
-
-        function spawnParticles(x, y, type, count) {
-            for(let i=0; i<count; i++) {
-                let p = particlePool.length > 0 ? particlePool.pop() : new Particle();
-                p.spawn(x, y, type);
-                particles.push(p);
-            }
-        }
-        function getObstacle(lane) {
-            let o = obstaclePool.length > 0 ? obstaclePool.pop() : new Obstacle();
-            o.spawn(lane);
-            return o;
-        }
-        function getCollectible(lane) {
-            let c = collectiblePool.length > 0 ? collectiblePool.pop() : new Collectible();
-            c.spawn(lane);
-            return c;
-        }
-
-        // --- Loop ---
-
-        function initGame() {
-            initSprites();
-            resizeCanvas();
-            
-            if (!player) player = new Player();
-            player.reset();
-            
-            obstacles = [];
-            collectibles = [];
-            particles = [];
-
-            score = 0;
-            gameSpeed = 300; 
-            lastLeaderboardUpdate = 0;
-            updateHUD();
-        }
-
-        function update(dt) {
-            gameSpeed += 5 * dt; 
-            backgroundOffset += gameSpeed * dt;
-            
-            player.update(dt);
-            
-            // Update live leaderboard every 3 seconds
-            lastLeaderboardUpdate += dt;
-            if (lastLeaderboardUpdate > 3) {
-                lastLeaderboardUpdate = 0;
-                updateLiveRank();
-            }
-
-            // Optimized spawning with difficulty curve
-            const spawnChance = Math.min(0.02 + (score / 100000), 0.05);
-            if (Math.random() < spawnChance) {
-                const lane = Math.floor(Math.random() * 3);
-                const safe = ![...obstacles, ...collectibles].some(e => e.laneIndex === lane && e.y < 100);
-                if (safe
-                if (safe) {
-                    // More coins at start, more obstacles later
-                    const coinChance = Math.max(0.6 - (score / 5000), 0.3);
-                    if (Math.random() < coinChance) collectibles.push(getCollectible(lane));
-                    else obstacles.push(getObstacle(lane));
-                }
-            }
-
-            [obstacles, collectibles, particles].forEach(list => {
-                for (let i = list.length - 1; i >= 0; i--) {
-                    let e = list[i];
-                    e.update(dt);
-                    if (!e.active) {
-                        if(list === obstacles) obstaclePool.push(e);
-                        if(list === collectibles) collectiblePool.push(e);
-                        if(list === particles) particlePool.push(e);
-                        list.splice(i, 1);
-                    }
-                }
-            });
-
-            checkCollisions();
-        }
-
-        function checkCollisions() {
-            // Optimized collision detection with early exit
-            const playerY = player.y - player.jumpHeight;
-            
-            for (let i = collectibles.length - 1; i >= 0; i--) {
-                const c = collectibles[i];
-                if (!c.active) continue;
-                
-                const dist = Math.hypot(player.x - c.x, playerY - c.y);
-                if (dist < 40) {
-                    c.active = false;
-                    score += 100;
-                    updateHUD();
-                    spawnParticles(c.x, c.y, 'gold', 5);
-                }
-            }
-
-            for (let i = 0; i < obstacles.length; i++) {
-                const o = obstacles[i];
-                if (!o.active) continue;
-                
-                // Skip if player is high enough
-                if (player.jumpHeight > 60) continue;
-                
-                if (Math.abs(player.x - o.x) < 25 && Math.abs(playerY - o.y) < 35) {
-                    gameOver();
-                    return;
-                }
-            }
-        }
-
-        function draw() {
-            // Clear with performance optimization
-            ctx.fillStyle = colors.bg;
-            ctx.fillRect(0, 0, cw, ch);
-
-            const totalWidth = Math.min(cw, 600);
-            const margin = (cw - totalWidth) / 2;
-
-            // Grid Floor (Perspective Hack) - Optimized
-            ctx.strokeStyle = colors.grid;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            
-            // Vertical Lines
-            for(let i=0; i<=3; i++) {
-                const x = margin + (i * laneWidth);
-                ctx.moveTo(x, 0); ctx.lineTo(x, ch);
-            }
-            
-            // Horizontal Moving Lines with speed effect
-            const gridSize = 80;
-            const offset = backgroundOffset % gridSize;
-            for(let y = offset; y < ch; y += gridSize) {
-                ctx.moveTo(margin, y); ctx.lineTo(margin + totalWidth, y);
-            }
-            ctx.stroke();
-
-            // Side Glows with pulsing effect
-            const pulse = Math.sin(Date.now() / 500) * 0.05 + 0.1;
-            ctx.fillStyle = colors.gridLight;
-            ctx.globalAlpha = pulse;
-            ctx.fillRect(margin - 2, 0, 2, ch);
-            ctx.fillRect(margin + totalWidth, 0, 2, ch);
-            ctx.globalAlpha = 1.0;
-
-            // Optimized rendering with depth sorting
-            const renderList = [player, ...obstacles, ...collectibles];
-            renderList.sort((a, b) => a.y - b.y);
-            
-            // Batch render by type for better performance
-            renderList.forEach(e => e.draw(ctx));
-            
-            // Render particles last (alpha blending)
-            if (particles.length > 0) {
-                particles.forEach(p => p.draw(ctx));
-            }
-        }
-
-        function loop(timestamp) {
-            if (gameState !== 'PLAYING') return;
-            if (!lastTime) lastTime = timestamp;
-            const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
-            lastTime = timestamp;
-            update(dt);
-            draw();
-            frameId = requestAnimationFrame(loop);
-        }
-
-        // --- UI ---
         function startGame() {
-            // Clear previous game state
-            if (player) player.reset();
-            obstacles = [];
-            collectibles = [];
-            particles = [];
             score = 0;
-            gameSpeed = 300;
-            lastLeaderboardUpdate = 0;
-            
-            initGame();
-            gameState = 'PLAYING';
-            gameStartTime = Date.now(); // Track start time
-            
+            gameStartTime = Date.now();
             document.getElementById('hud').classList.remove('hidden-screen');
-            lastTime = 0;
-            requestAnimationFrame(loop);
+            console.log('🎮 Game started');
         }
 
-        function updateHUD() {
-            document.getElementById('scoreDisplay').innerText = score;
-        }
-        
-        // Update live leaderboard rank
-        async function updateLiveRank() {
-            if (!currentUser || score === 0) return;
-            
-            try {
-                const response = await fetch(`${CONFIG.API_ENDPOINT}/live-rank`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fid: currentUser.fid,
-                        score: score
-                    })
-                });
-                
-                if (!response.ok) {
-                    console.warn('live-rank HTTP error', response.status);
-                    return;
-                }
-
-                const data = await response.json().catch(() => ({}));
-                const rankValue = Number(data.rank);
-                if (!Number.isFinite(rankValue) || rankValue <= 0) return;
-
-                currentRank = rankValue;
-                
-                const rankEl = document.getElementById('liveRank');
-                rankEl.textContent = `#${currentRank}`;
-                
-                // Color based on rank
-                if (currentRank <= 5) {
-                    rankEl.className = 'text-yellow-400 font-bold game-font ml-2';
-                } else if (currentRank <= 20) {
-                    rankEl.className = 'text-green-400 font-bold game-font ml-2';
-                } else {
-                    rankEl.className = 'text-cyan-400 font-bold game-font ml-2';
-                }
-            } catch (error) {
-                console.error('❌ Live rank update failed:', error);
-            }
-        }
-
-        async function gameOver() {
-            gameState = 'GAMEOVER';
-            cancelAnimationFrame(frameId);
-            
-            document.getElementById('finalScore').innerText = score;
+        function gameOver() {
             document.getElementById('hud').classList.add('hidden-screen');
-            
-            // Submit final score
-            const result = await submitScore(score);
-            
-            // Update payout estimate
-            const estRank = Number(result.rank);
-            const estPayout = Number.parseFloat(result.payout);
-            if (Number.isFinite(estRank) && estRank > 0 && estRank <= 20 && Number.isFinite(estPayout)) {
-                document.getElementById('estPayout').textContent = `$${estPayout.toFixed(2)}`;
-            } else {
-                document.getElementById('estPayout').textContent = '$0.00';
-            }
-            
-            const go = document.getElementById('gameOverScreen');
-            go.classList.remove('hidden-screen');
-            go.classList.add('active-screen');
-            
-            // Clear session token after game ends
-            sessionToken = null;
+            document.getElementById('finalScore').textContent = score;
+            document.getElementById('estPayout').textContent = '$0.00';
+            document.getElementById('gameOverScreen').classList.remove('hidden-screen');
+            document.getElementById('gameOverScreen').classList.add('active-screen');
+            console.log('🏁 Game over. Score:', score);
         }
 
-        // Initialize on load
+        function shareResult() {
+            const text = `Scored ${score} in Far Meow! 🐱⚡`;
+            const url = `https://warpcast.com/~/compose?text=${encodeURIComponent(text)}&embeds%5B%5D=https://farmeow.vercel.app`;
+            window.open(url, '_blank');
+        }
+
+        function refreshLeaderboard() {
+            const icon = document.getElementById('refreshIcon');
+            icon.style.transform = 'rotate(360deg)';
+            icon.style.transition = 'transform 0.5s ease';
+            loadLeaderboard();
+            setTimeout(() => { icon.style.transform = 'rotate(0deg)'; }, 500);
+        }
+
+        // ============================================
+        // INIT
+        // ============================================
+
         window.addEventListener('load', () => {
-            resizeCanvas();
-            initApp();
+            console.log('🚀 App loading...');
+            // Check if this is a callback from Neynar
+            if (window.location.search.includes('code=')) {
+                handleNeynarCallback();
+            } else {
+                initApp();
+            }
         });
 
-        // Cleanup on unload
         window.addEventListener('beforeunload', () => {
             if (countdownInterval) clearInterval(countdownInterval);
         });
