@@ -3,348 +3,95 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Far Meow: Cat Running Game 🐱⚡</title>
+    <title>Far Meow 🐱⚡</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js" type="text/javascript"></script>
+    <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
-        body {
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-            background-color: #050510;
-            font-family: 'Nunito', sans-serif;
-            touch-action: none;
-            -webkit-font-smoothing: antialiased;
-        }
-        
-        canvas { display: block; }
+        body { margin: 0; padding: 0; background: #050510; font-family: Nunito, sans-serif; }
         .game-font { font-family: 'Fredoka One', cursive; }
-
-        /* UI Screens */
-        .ui-screen {
-            transition: opacity 0.3s ease;
-            position: absolute;
-            inset: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            z-index: 20;
-        }
-        
-        .hidden-screen {
-            opacity: 0;
-            pointer-events: none;
-        }
-
-        .active-screen {
-            opacity: 1;
-            pointer-events: auto;
-        }
-
-        /* HUD */
-        .hud-layer {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            pointer-events: none;
-            z-index: 10;
-        }
-
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-8px); }
-        }
-        .animate-float { animation: float 3s ease-in-out infinite; }
-
-        .glass-panel {
-            background: rgba(10, 10, 20, 0.8);
-            backdrop-filter: blur(8px);
-            border: 1px solid rgba(56, 189, 248, 0.3); /* Light Blue Border */
-            box-shadow: 0 0 15px rgba(56, 189, 248, 0.1);
-            border-radius: 16px;
-        }
-        
-        .neon-text {
-            text-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
-        }
-
-        /* LEADERBOARD STYLES */
-        .leaderboard-container {
-            max-height: 400px;
-            overflow-y: auto;
-            scrollbar-width: thin;
-            scrollbar-color: rgba(56, 189, 248, 0.3) transparent;
-        }
-        
-        .leaderboard-container::-webkit-scrollbar {
-            width: 6px;
-        }
-        
-        .leaderboard-container::-webkit-scrollbar-track {
-            background: transparent;
-        }
-        
-        .leaderboard-container::-webkit-scrollbar-thumb {
-            background: rgba(56, 189, 248, 0.3);
-            border-radius: 3px;
-        }
-        
-        .leaderboard-row {
-            transition: background-color 0.2s ease;
-        }
-        
-        .leaderboard-row:hover {
-            background: rgba(56, 189, 248, 0.1);
-        }
-        
-        .rank-badge {
-            min-width: 32px;
-            height: 32px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: bold;
-        }
-        
-        .rank-1 { background: linear-gradient(135deg, #ffd700, #ffed4e); color: #000; }
-        .rank-2 { background: linear-gradient(135deg, #c0c0c0, #e8e8e8); color: #000; }
-        .rank-3 { background: linear-gradient(135deg, #cd7f32, #e89b5c); color: #000; }
-        .rank-other { background: rgba(56, 189, 248, 0.2); color: #67e8f9; }
+        .glass-panel { background: rgba(10,10,20,0.8); backdrop-filter: blur(8px); border: 1px solid rgba(56,189,248,0.3); border-radius: 16px; }
+        .rank-1 { background: #ffd700; color: #000; }
+        .rank-2 { background: #c0c0c0; color: #000; }
+        .rank-3 { background: #cd7f32; color: #000; }
     </style>
 </head>
-<body class="text-white select-none bg-gray-900">
-
-    <!-- Header -->
-    <div class="absolute top-0 left-0 w-full h-12 bg-gray-900/90 border-b border-cyan-900/50 z-50 flex items-center px-4 justify-between text-xs text-cyan-400">
-        <div class="flex items-center gap-2">
-            <div class="w-4 h-4 rounded-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.6)]"></div>
-            <span id="farcasterStatus">CONNECTING...</span>
-        </div>
-        <div><span id="walletBalance">-- USDC</span></div>
-    </div>
-
-    <canvas id="gameCanvas" class="mt-12"></canvas>
-
-    <!-- 1. LANDING SCREEN -->
-    <div id="landingScreen" class="ui-screen active-screen pt-12">
-        <div class="absolute top-16 bg-cyan-900/20 border border-cyan-500/50 px-4 py-1 rounded-full flex items-center gap-2">
-            <span class="text-xs text-cyan-300 font-bold uppercase">ENDS IN</span>
-            <span id="countDown" class="font-mono font-bold text-cyan-100">59:21</span>
-        </div>
-
-        <div class="text-center animate-float mt-8">
-            <h1 class="text-5xl game-font text-transparent bg-clip-text bg-gradient-to-b from-cyan-300 to-blue-500 neon-text tracking-wide">FAR<br>MEOW</h1>
-            <p class="text-cyan-300 font-bold mt-2 tracking-widest text-xs">FARCASTER EDITION</p>
-        </div>
-
-        <div class="mt-8 glass-panel p-6 w-11/12 max-w-sm text-center">
-            <p class="text-cyan-400 text-xs font-bold uppercase tracking-widest mb-1">HOURLY JACKPOT</p>
-            <p class="text-5xl game-font text-white neon-text">$<span id="potValue">1,240</span></p>
+<body class="text-white select-none">
+    <div class="min-h-screen flex flex-col items-center justify-center p-4">
+        <div class="glass-panel p-8 w-full max-w-sm text-center">
+            <h1 class="text-5xl game-font mb-4">FAR MEOW 🐱⚡</h1>
             
-            <div class="grid grid-cols-3 gap-2 text-center text-xs border-t border-cyan-800/50 pt-4 mt-4">
-                <div><div class="text-cyan-500">1ST</div><div class="text-white font-bold">$310</div></div>
-                <div><div class="text-cyan-500">TOP 10</div><div class="text-white font-bold">>$55</div></div>
-                <div><div class="text-cyan-500">TOP 20</div><div class="text-white font-bold">>$22</div></div>
+            <div id="status" class="mb-6 p-4 bg-cyan-900/30 rounded-lg">
+                <p id="statusText" class="text-sm">Loading...</p>
             </div>
-        </div>
-        
-        <div class="mt-8 w-full px-6 max-w-sm">
-            <button onclick="initiatePayment()" class="w-full py-4 rounded-xl font-black text-xl bg-gradient-to-r from-cyan-500 to-blue-600 text-white game-font shadow-[0_0_20px_rgba(6,182,212,0.4)] active:scale-95 transition-transform">
-                PLAY NOW <span class="text-sm opacity-80 ml-2">(0.25 USDC)</span>
+
+            <button onclick="connectWallet()" id="connectBtn" class="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold mb-4">
+                CONNECT WALLET
             </button>
-            <p class="text-cyan-400 text-xs mt-2 text-center">Connect wallet to play • Top 20 split prize pool</p>
-        </div>
 
-        <!-- LEADERBOARD SECTION -->
-        <div class="mt-6 glass-panel p-4 w-11/12 max-w-sm">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="text-cyan-400 font-bold text-sm uppercase tracking-widest">Top 100 Players</h3>
-                <button onclick="refreshLeaderboard()" class="text-cyan-500 text-xs hover:text-cyan-300">
-                    <span id="refreshIcon">🔄</span>
-                </button>
+            <button onclick="initiatePayment()" id="playBtn" class="w-full py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white rounded-lg font-bold mb-4" style="display:none;">
+                PLAY NOW (0.25 USDC)
+            </button>
+
+            <div id="info" class="text-left text-xs text-cyan-300 space-y-2">
+                <p><strong>Pot:</strong> $<span id="pot">--</span></p>
+                <p><strong>Balance:</strong> <span id="balance">-- USDC</span></p>
+                <p><strong>Time Left:</strong> <span id="timer">--:--</span></p>
             </div>
-            
-            <div class="leaderboard-container">
+
+            <div id="leaderboard" class="mt-6 max-h-64 overflow-y-auto text-left text-xs">
+                <h3 class="font-bold mb-2 text-cyan-400">Top Players</h3>
                 <div id="leaderboardList" class="space-y-1">
-                    <div class="text-center py-8 text-cyan-400 text-sm">
-                        Loading leaderboard...
-                    </div>
+                    <p class="text-gray-400">Loading...</p>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <!-- 2. PAYMENT SCREEN -->
-    <div id="paymentScreen" class="ui-screen hidden-screen glass-panel z-30 bg-black/90">
-        <div class="text-center">
-            <div class="w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <h3 class="text-sm text-white">PROCESSING...</h3>
-        </div>
-    </div>
-
-    <!-- 3. HUD -->
-    <div id="hud" class="hud-layer hidden-screen pt-12">
-        <div class="absolute top-16 left-4 right-4 flex justify-between items-start">
-            <div class="bg-gray-900/60 backdrop-blur px-4 py-2 rounded-full border border-cyan-500/30 flex items-center gap-2">
-                <span class="text-xl">💠</span>
-                <span id="scoreDisplay" class="text-xl font-bold text-white game-font">0</span>
-            </div>
-            <div class="bg-gray-900/60 backdrop-blur px-4 py-2 rounded-full border border-cyan-500/30 text-right">
-                <span class="text-cyan-300 text-xs font-bold uppercase">RANK</span>
-                <span id="liveRank" class="text-green-400 font-bold game-font ml-2">--</span>
-            </div>
-        </div>
-        <div class="absolute bottom-8 w-full text-center">
-             <p class="text-cyan-200/50 text-xs font-bold animate-pulse">TAP TO JUMP</p>
-        </div>
-    </div>
-
-    <!-- 4. GAME OVER -->
-    <div id="gameOverScreen" class="ui-screen hidden-screen z-30 pt-12 bg-black/80 backdrop-blur">
-        <div class="glass-panel p-8 rounded-3xl text-center max-w-xs w-full">
-            <h2 class="text-3xl text-white game-font mb-1 neon-text">Finished!</h2>
-            
-            <div class="bg-gray-900/50 rounded-xl p-4 mb-6 border border-cyan-900/50">
-                <div class="flex justify-between items-end mb-2 border-b border-cyan-900/50 pb-2">
-                    <span class="text-cyan-400 text-sm">SCORE</span>
-                    <span id="finalScore" class="text-xl text-white font-bold">0</span>
-                </div>
-                <div class="flex justify-between items-end">
-                    <span class="text-yellow-500 text-sm font-bold">PAYOUT</span>
-                    <span id="estPayout" class="text-xl text-yellow-400 font-bold">$23.40</span>
-                </div>
-            </div>
-            
-            <button onclick="initiatePayment()" class="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-bold text-lg mb-3 shadow-lg transition-colors">RETRY</button>
-            <button onclick="shareResult()" class="w-full py-3 border border-cyan-700 text-cyan-300 rounded-xl font-bold text-sm hover:bg-cyan-900/30 transition-colors">Share Result</button>
         </div>
     </div>
 
     <script>
-        // Wait for ethers to load
-        if (typeof ethers === 'undefined') {
-            console.error('Ethers.js not loaded');
-        }
-
         const CONFIG = {
             VAULT_CONTRACT: '0xaf08c8f5100Afd8aE30f40751ED85B125b873f77',
             USDC_ADDRESS: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
             BASE_CHAIN_ID: 84532,
-            ENTRY_FEE: '250000',
-            MAX_SCORE: 999999,
-            MIN_GAME_DURATION: 5000
+            ENTRY_FEE: '250000'
         };
 
-        let ethersProvider = null;
-        let currentUser = null;
-        let vaultContract = null;
-        let usdcContract = null;
-        let currentPot = 0;
-        let currentRoundId = null;
-        let gameStartTime = null;
-        let isProcessingPayment = false;
-        let countdownInterval = null;
-        let score = 0; // Ensure score is defined globally
+        let provider = null, signer = null, vault = null, usdc = null, currentRound = null;
 
-        // FIXED: Added missing ABIs
         const VAULT_ABI = [
             "function payEntry() external",
-            "function commitScore(bytes32) external",
             "function getCurrentRound() view returns (uint256, uint256, uint256, uint256, bool)",
-            "function getPlayerScore(address) view returns (uint256)",
             "function getTopPlayers(uint256) view returns (address[], uint256[])",
-            "function estimatePayout(uint256) view returns (uint256)",
-            "function verifyPlayer(address, uint256) external"
+            "function estimatePayout(uint256) view returns (uint256)"
         ];
-        
+
         const ERC20_ABI = [
             "function balanceOf(address) view returns (uint256)",
             "function approve(address spender, uint256 amount) external returns (bool)",
             "function allowance(address owner, address spender) view returns (uint256)"
         ];
 
-        // ============================================
-        // WALLET CONNECTION STRATEGY
-        // ============================================
-
-        async function initApp() {
-            resizeCanvas();
-            
-            // 1. Try Farcaster Frame SDK first
-            if (window.frameSDK) {
-                try {
-                    const context = await window.frameSDK.context;
-                    if (context && context.user) {
-                        console.log('✅ Farcaster Frame detected');
-                        currentUser = {
-                            address: null, // Address comes from wallet provider
-                            username: context.user.username,
-                            fid: context.user.fid
-                        };
-                        
-                        // If Frame SDK provides a provider, use it
-                        if (window.frameSDK.wallet && window.frameSDK.wallet.ethProvider) {
-                            ethersProvider = new ethers.providers.Web3Provider(window.frameSDK.wallet.ethProvider);
-                            await setupWalletConnection();
-                            return;
-                        }
-                    }
-                } catch (e) {
-                    console.warn('Farcaster SDK init failed, falling back to web', e);
-                }
-            }
-
-            // 2. Fallback to Standard Web3 (MetaMask/Coinbase)
-            showConnectButton();
-        }
-
         async function connectWallet() {
             try {
-                if (typeof ethers === 'undefined') {
-                    alert('Please refresh the page.');
-                    return;
-                }
-
-                // Check for window.ethereum (MetaMask, Coinbase, etc.)
                 if (!window.ethereum) {
-                    alert('No wallet found! Please install MetaMask or Coinbase Wallet.');
-                    window.open('https://metamask.io/download/', '_blank');
+                    alert('Install MetaMask: https://metamask.io');
                     return;
                 }
 
-                await window.ethereum.request({ method: 'eth_requestAccounts' });
-                ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
-                
-                await setupWalletConnection();
-                
-            } catch (error) {
-                console.error('❌ Wallet connection failed:', error);
-                alert('Failed to connect: ' + (error.message || error));
-            }
-        }
+                const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+                provider = new ethers.providers.Web3Provider(window.ethereum);
+                signer = provider.getSigner();
+                const address = accounts[0];
 
-        async function setupWalletConnection() {
-            try {
-                const signer = ethersProvider.getSigner();
-                const address = await signer.getAddress();
-                
-                // Check/switch network
-                const network = await ethersProvider.getNetwork();
+                const network = await provider.getNetwork();
                 if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
                     try {
                         await window.ethereum.request({
                             method: 'wallet_switchEthereumChain',
-                            params: [{ chainId: '0x14a34' }], // 84532 hex
+                            params: [{ chainId: '0x14a34' }]
                         });
-                        // Re-init provider after switch
-                        ethersProvider = new ethers.providers.Web3Provider(window.ethereum || window.frameSDK.wallet.ethProvider);
-                    } catch (switchError) {
-                        if (switchError.code === 4902) {
+                    } catch (e) {
+                        if (e.code === 4902) {
                             await window.ethereum.request({
                                 method: 'wallet_addEthereumChain',
                                 params: [{
@@ -355,913 +102,94 @@
                                     blockExplorerUrls: ['https://sepolia.basescan.org']
                                 }]
                             });
-                            ethersProvider = new ethers.providers.Web3Provider(window.ethereum || window.frameSDK.wallet.ethProvider);
-                        } else {
-                            throw switchError;
-                        }
+                        } else throw e;
                     }
                 }
 
-                // Update User Object
-                if (!currentUser) {
-                    currentUser = { 
-                        address: address,
-                        username: `${address.slice(0, 6)}...${address.slice(-4)}`
-                    };
-                } else {
-                    currentUser.address = address;
-                }
+                vault = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signer);
+                usdc = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signer);
 
-                document.getElementById('farcasterStatus').textContent = currentUser.username;
+                document.getElementById('statusText').textContent = `✅ ${address.slice(0,6)}...${address.slice(-4)}`;
+                document.getElementById('connectBtn').style.display = 'none';
+                document.getElementById('playBtn').style.display = 'block';
 
-                // Initialize contracts
-                const signerInstance = ethersProvider.getSigner();
-                vaultContract = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signerInstance);
-                usdcContract = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signerInstance);
-                
-                // Auto-verify (On-chain)
-                await autoVerifyPlayer(address);
-                
-                // Load Data
-                await loadVaultData();
-                await updateBalance();
-                await loadLeaderboardFromContract();
-                
-                // Start Polling
-                setInterval(loadVaultData, 10000);
-                setInterval(updateBalance, 30000);
-                setInterval(loadLeaderboardFromContract, 15000);
-                
-                console.log('✅ Wallet connected & setup complete:', address);
-
+                await updateAll();
+                setInterval(updateAll, 10000);
             } catch (error) {
-                console.error('Setup wallet failed:', error);
-                alert('Connection setup failed. Please try again.');
+                alert(`Error: ${error.message}`);
+                console.error(error);
             }
         }
 
-        async function autoVerifyPlayer(address) {
+        async function updateAll() {
             try {
-                // Only attempt if we are the owner or if the contract allows public verification (it doesn't usually)
-                // But we can check if verified
-                // For this specific contract logic, verification is gated by onlyGameServer.
-                // Since we removed the backend, we rely on the contract being open or the user being the owner for testing.
-                // In production without backend, this step might fail if not owner. 
-                // We will just log it.
-                console.log('Checking verification status...');
-            } catch (error) {
-                console.log('Player verification check:', error.message);
-            }
-        }
+                const roundData = await vault.getCurrentRound();
+                currentRound = roundData[0].toNumber();
+                const pot = ethers.utils.formatUnits(roundData[1], 6);
+                const timeLeft = roundData[3].toNumber();
 
-        function showConnectButton() {
-            const statusDiv = document.getElementById('farcasterStatus');
-            statusDiv.innerHTML = `<button onclick="connectWallet()" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white font-bold text-xs transition-colors">CONNECT</button>`;
-        }
+                document.getElementById('pot').textContent = Math.floor(pot).toLocaleString();
+                updateTimer(timeLeft);
 
-        // ============================================
-        // LOAD DATA FROM BLOCKCHAIN
-        // ============================================
-
-        async function loadVaultData() {
-            if (!vaultContract) return;
-            try {
-                const roundData = await vaultContract.getCurrentRound();
-                currentRoundId = roundData[0].toNumber();
-                const vaultAmount = ethers.utils.formatUnits(roundData[1], 6);
-                const timeRemaining = roundData[3].toNumber();
-                currentPot = parseFloat(vaultAmount);
-                document.getElementById('potValue').textContent = Math.floor(currentPot).toLocaleString();
-                document.getElementById('potValueSmall').textContent = Math.floor(currentPot).toLocaleString();
-                startCountdown(timeRemaining);
-                updatePayoutEstimates(currentPot);
-            } catch (error) {
-                console.error('❌ Load vault data failed:', error);
-            }
-        }
-
-        async function updateBalance() {
-            if (!usdcContract || !ethersProvider) return;
-            try {
-                const signer = ethersProvider.getSigner();
                 const address = await signer.getAddress();
-                const balance = await usdcContract.balanceOf(address);
-                const formatted = ethers.utils.formatUnits(balance, 6);
-                document.getElementById('walletBalance').textContent = `${parseFloat(formatted).toFixed(2)} USDC`;
-            } catch (error) {
-                console.error('❌ Balance update failed:', error);
-            }
-        }
+                const balance = await usdc.balanceOf(address);
+                document.getElementById('balance').textContent = `${ethers.utils.formatUnits(balance, 6)} USDC`;
 
-        // FIXED: Load leaderboard directly from contract
-        async function loadLeaderboardFromContract() {
-            if (!vaultContract || !currentRoundId) {
-                document.getElementById('leaderboardList').innerHTML = 
-                    '<div class="text-center py-8 text-cyan-400 text-sm">Connect wallet to view leaderboard</div>';
-                return;
-            }
-            
-            try {
-                const [addresses, scores] = await vaultContract.getTopPlayers(currentRoundId);
-                
-                if (!addresses || addresses.length === 0) {
-                    document.getElementById('leaderboardList').innerHTML = 
-                        '<div class="text-center py-8 text-cyan-400 text-sm">No players yet. Be the first!</div>';
-                    return;
-                }
-                
+                const [addresses, scores] = await vault.getTopPlayers(currentRound);
                 let html = '';
                 for (let i = 0; i < Math.min(addresses.length, 20); i++) {
-                    const rank = i + 1;
-                    const rankClass = rank === 1 ? 'rank-1' : rank === 2 ? 'rank-2' : rank === 3 ? 'rank-3' : 'rank-other';
-                    const score = scores[i].toNumber();
-                    const payout = await vaultContract.estimatePayout(i);
-                    const payoutFormatted = parseFloat(ethers.utils.formatUnits(payout, 6));
-                    const addr = addresses[i];
-                    const shortAddr = `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-                    const isCurrentUser = currentUser && addr.toLowerCase() === currentUser.address.toLowerCase();
-                    const highlightClass = isCurrentUser ? 'bg-cyan-900/30 border border-cyan-500/50' : '';
-                    
-                    html += `
-                        <div class="leaderboard-row flex items-center justify-between p-2 rounded-lg ${highlightClass}">
-                            <div class="flex items-center gap-3 flex-1 min-w-0">
-                                <div class="rank-badge ${rankClass} text-xs flex-shrink-0">${rank}</div>
-                                <div class="flex-1 min-w-0">
-                                    <div class="text-white font-bold text-sm truncate">${isCurrentUser ? '👤 ' : ''}${shortAddr}</div>
-                                    <div class="text-cyan-400 text-xs">${score.toLocaleString()} pts</div>
-                                </div>
-                            </div>
-                            <div class="text-right flex-shrink-0">
-                                <div class="text-yellow-400 font-bold text-sm">${payoutFormatted > 0 ? `$${payoutFormatted.toFixed(2)}` : '-'}</div>
-                            </div>
-                        </div>
-                    `;
+                    const payout = await vault.estimatePayout(i);
+                    html += `<div class="flex justify-between p-2 ${i<3?'bg-gray-800':''}">
+                        <span>${i+1}. ${addresses[i].slice(0,6)}...${addresses[i].slice(-4)}</span>
+                        <span>${scores[i]} pts</span>
+                    </div>`;
                 }
-                document.getElementById('leaderboardList').innerHTML = html;
+                document.getElementById('leaderboardList').innerHTML = html || '<p class="text-gray-400">No players yet</p>';
             } catch (error) {
-                console.error('❌ Leaderboard load failed:', error);
-                document.getElementById('leaderboardList').innerHTML = 
-                    '<div class="text-center py-8 text-red-400 text-sm">Failed to load leaderboard</div>';
+                console.error('Update failed:', error);
             }
         }
 
-        async function refreshLeaderboard() {
-            const icon = document.getElementById('refreshIcon');
-            icon.style.transform = 'rotate(360deg)';
-            icon.style.transition = 'transform 0.5s ease';
-            await loadLeaderboardFromContract();
-            setTimeout(() => { icon.style.transform = 'rotate(0deg)'; }, 500);
+        function updateTimer(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            document.getElementById('timer').textContent = `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
         }
-
-        function startCountdown(seconds) {
-            if (countdownInterval) clearInterval(countdownInterval);
-            let remaining = seconds;
-            const updateDisplay = () => {
-                if (remaining <= 0) {
-                    clearInterval(countdownInterval);
-                    document.getElementById('countDown').textContent = '00:00';
-                    return;
-                }
-                const minutes = Math.floor(remaining / 60);
-                const secs = remaining % 60;
-                document.getElementById('countDown').textContent = 
-                    `${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-                remaining--;
-            };
-            updateDisplay();
-            countdownInterval = setInterval(updateDisplay, 1000);
-        }
-
-        function updatePayoutEstimates(vaultAmount) {
-            const vault = parseFloat(vaultAmount);
-            if (!Number.isFinite(vault)) return;
-            const elems = document.querySelectorAll('.grid .text-white.font-bold');
-            if (elems.length < 3) return;
-            elems[0].textContent = `$${Math.floor(vault * 0.255)}`;
-            elems[1].textContent = `$${Math.floor(vault * 0.025)}`;
-            elems[2].textContent = `$${Math.floor(vault * 0.025)}`;
-        }
-
-        // ============================================
-        // PAYMENT
-        // ============================================
 
         async function initiatePayment() {
-            if (isProcessingPayment) return;
-
-            if (!ethersProvider || !vaultContract || !usdcContract) {
-                await connectWallet();
-                return;
-            }
-
-            if (!currentRoundId) {
-                alert('No active round. Please wait.');
-                return;
-            }
-            
-            isProcessingPayment = true;
-            
-            document.getElementById('landingScreen').classList.remove('active-screen');
-            document.getElementById('landingScreen').classList.add('hidden-screen');
-            document.getElementById('gameOverScreen').classList.remove('active-screen');
-            document.getElementById('gameOverScreen').classList.add('hidden-screen');
-
-            const payScreen = document.getElementById('paymentScreen');
-            payScreen.classList.remove('hidden-screen');
-            payScreen.classList.add('active-screen');
-
             try {
-                const signer = ethersProvider.getSigner();
+                if (!vault) {
+                    alert('Connect wallet first');
+                    return;
+                }
+
                 const address = await signer.getAddress();
-                
-                const balance = await usdcContract.balanceOf(address);
+                const balance = await usdc.balanceOf(address);
                 if (balance.lt(CONFIG.ENTRY_FEE)) {
-                    throw new Error('Insufficient USDC. You need 0.25 USDC to play.');
+                    alert('Need at least 0.25 USDC');
+                    return;
                 }
-                
-                const allowance = await usdcContract.allowance(address, CONFIG.VAULT_CONTRACT);
-                
+
+                const allowance = await usdc.allowance(address, CONFIG.VAULT_CONTRACT);
                 if (allowance.lt(CONFIG.ENTRY_FEE)) {
-                    const approveAmount = ethers.BigNumber.from(CONFIG.ENTRY_FEE).mul(10);
-                    const gasEstimate = await usdcContract.estimateGas.approve(CONFIG.VAULT_CONTRACT, approveAmount);
-                    const approveTx = await usdcContract.approve(CONFIG.VAULT_CONTRACT, approveAmount, { gasLimit: gasEstimate.mul(120).div(100) });
-                    await approveTx.wait(1);
+                    const tx = await usdc.approve(CONFIG.VAULT_CONTRACT, ethers.utils.parseUnits('100', 6));
+                    await tx.wait(1);
                 }
-                
-                const gasEstimate = await vaultContract.estimateGas.payEntry();
-                const tx = await vaultContract.payEntry({ gasLimit: gasEstimate.mul(120).div(100) });
-                const receipt = await tx.wait(1);
-                
-                if (receipt.status !== 1) {
-                    throw new Error('Transaction failed');
-                }
-                
-                console.log('✅ Payment successful:', receipt.transactionHash);
-                
-                await updateBalance();
-                
-                setTimeout(() => {
-                    payScreen.classList.remove('active-screen');
-                    payScreen.classList.add('hidden-screen');
-                    isProcessingPayment = false;
-                    startGame();
-                }, 800);
-                
+
+                const tx = await vault.payEntry();
+                await tx.wait(1);
+
+                alert('✅ Entry paid! Game starts now.');
+                await updateAll();
             } catch (error) {
-                console.error('❌ Payment failed:', error);
-                
-                let errorMsg = 'Payment failed. Please try again.';
-                if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-                    errorMsg = 'Transaction rejected.';
-                } else if (error.message) {
-                    errorMsg = error.message;
-                }
-                
-                alert(errorMsg);
-                
-                payScreen.classList.remove('active-screen');
-                payScreen.classList.add('hidden-screen');
-                document.getElementById('landingScreen').classList.add('active-screen');
-                document.getElementById('landingScreen').classList.remove('hidden-screen');
-                
-                isProcessingPayment = false;
+                alert(`Payment error: ${error.message}`);
+                console.error(error);
             }
         }
 
-        // ============================================
-        // SCORE SUBMISSION
-        // ============================================
-
-        let score = 0;
-
-        async function submitScore(finalScore) {
-            if (!currentUser || !vaultContract || !ethersProvider) {
-                return { rank: '--', payout: '0.00' };
-            }
-
-            const sanitizedScore = Math.floor(Number(finalScore));
-            if (!Number.isFinite(sanitizedScore) || sanitizedScore < 0 || sanitizedScore > CONFIG.MAX_SCORE) {
-                return { rank: '--', payout: '0.00' };
-            }
-            
-            try {
-                const secret = ethers.utils.randomBytes(32);
-                const secretHex = ethers.utils.hexlify(secret);
-                const commitment = ethers.utils.keccak256(
-                    ethers.utils.defaultAbiCoder.encode(['uint256', 'bytes32'], [sanitizedScore, secretHex])
-                );
-
-                const commitTx = await vaultContract.commitScore(commitment);
-                await commitTx.wait(1);
-                console.log('✅ Score committed');
-                
-                // Note: Game server will call submitScore() on backend to reveal
-                
-                return { rank: '--', payout: '0.00' };
-            } catch (error) {
-                console.error('❌ Score commit failed:', error);
-                return { rank: '--', payout: '0.00' };
-            }
-        }
-
-        async function shareResult() {
-            const safeScore = Number.isFinite(score) ? score : 0;
-            const safePot = Number.isFinite(currentPot) ? Math.floor(currentPot) : 0;
-            const shareText = `I scored ${safeScore} points in Far Meow! 🐱⚡\n\nPlay now: https://farmeow.vercel.app`;
-            const warpcastUrl = `https://warpcast.com/~/compose?text=${encodeURIComponent(shareText)}`;
-            window.open(warpcastUrl, '_blank');
-        }
-
-        // --- OPTIMIZED NEON SPRITE GENERATOR (The Secret Sauce) ---
-        // We draw complex glows ONCE into an offscreen canvas, then just draw that image.
-        const sprites = {};
-
-        function createOffscreenSprite(width, height, drawFn) {
-            const c = document.createElement('canvas');
-            c.width = width;
-            c.height = height;
-            const ctx = c.getContext('2d');
-            drawFn(ctx, width, height);
-            return c;
-        }
-
-        function initSprites() {
-            // 1. NEON CAT (64x64)
-            sprites.cat = createOffscreenSprite(80, 80, (ctx, w, h) => {
-                const cx = w/2, cy = h/2;
-                
-                // Outer Glow (Baked in)
-                ctx.shadowBlur = 20;
-                ctx.shadowColor = '#06b6d4'; // Cyan Glow
-                
-                // Body
-                ctx.fillStyle = '#e0f2fe'; // Almost white
-                ctx.beginPath(); 
-                ctx.ellipse(cx, cy+5, 18, 14, 0, 0, Math.PI*2); 
-                ctx.fill();
-
-                // Head
-                ctx.beginPath(); 
-                ctx.arc(cx, cy-10, 14, 0, Math.PI*2); 
-                ctx.fill();
-
-                // Ears
-                ctx.beginPath();
-                ctx.moveTo(cx-12, cy-18); ctx.lineTo(cx-16, cy-28); ctx.lineTo(cx-4, cy-20);
-                ctx.moveTo(cx+12, cy-18); ctx.lineTo(cx+16, cy-28); ctx.lineTo(cx+4, cy-20);
-                ctx.fill();
-                
-                // Turn off heavy shadow for details
-                ctx.shadowBlur = 0;
-                
-                // Helmet (Semi-transparent)
-                ctx.fillStyle = 'rgba(103, 232, 249, 0.3)';
-                ctx.strokeStyle = 'rgba(103, 232, 249, 0.8)';
-                ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.arc(cx, cy-10, 18, 0, Math.PI*2); 
-                ctx.fill(); ctx.stroke();
-
-                // Face Details
-                ctx.fillStyle = '#083344';
-                ctx.beginPath(); ctx.arc(cx-5, cy-10, 2, 0, Math.PI*2); ctx.arc(cx+5, cy-10, 2, 0, Math.PI*2); ctx.fill(); // Eyes
-                
-                // Jetpack
-                ctx.fillStyle = '#f472b6'; // Pink
-                ctx.fillRect(cx-12, cy, 4, 10);
-                ctx.fillRect(cx+8, cy, 4, 10);
-            });
-
-            // 2. NEON FISH (Coin)
-            sprites.fish = createOffscreenSprite(60, 60, (ctx, w, h) => {
-                const cx = w/2, cy = h/2;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#fbbf24'; // Amber glow
-                
-                ctx.strokeStyle = '#fbbf24';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.arc(cx, cy, 12, 0, Math.PI*2); // Coin shape
-                ctx.stroke();
-                
-                ctx.fillStyle = '#fbbf24';
-                ctx.font = 'bold 16px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText('$', cx, cy+1);
-            });
-
-            // 3. NEON OBSTACLE (Triangle)
-            sprites.obstacle = createOffscreenSprite(60, 60, (ctx, w, h) => {
-                const cx = w/2, cy = h/2;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = '#f43f5e'; // Rose glow
-                
-                ctx.strokeStyle = '#f43f5e';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(cx, cy-20);
-                ctx.lineTo(cx+18, cy+15);
-                ctx.lineTo(cx-18, cy+15);
-                ctx.closePath();
-                ctx.stroke();
-                
-                // Inner fill opacity
-                ctx.fillStyle = 'rgba(244, 63, 94, 0.2)';
-                ctx.fill();
-            });
-        }
-
-        // ============================================
-        // OPTIMIZED GAME ENGINE
-        // ============================================
-
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d', { 
-            alpha: false, 
-            desynchronized: true, // Better performance
-            willReadFrequently: false 
-        });
-        
-        let cw, ch, laneWidth;
-        
-        let gameState = 'MENU'; 
-        let frameId;
-        let lastTime = 0;
-        let gameSpeed = 300; // px per sec
-        let score = 0;
-        let lastLeaderboardUpdate = 0;
-        let currentRank = '--';
-        
-        let player;
-        let obstacles = [];
-        let collectibles = [];
-        let particles = [];
-        let backgroundOffset = 0;
-        
-        // Colors
-        const colors = {
-            bg: '#050510', 
-            grid: '#1e293b',
-            gridLight: '#0ea5e9'
-        };
-
-        let touchStartX = 0;
-        let touchStartY = 0;
-        
-        window.addEventListener('resize', resizeCanvas);
-        document.addEventListener('keydown', handleInput);
-        
-        canvas.addEventListener('touchstart', e => {
-            touchStartX = e.changedTouches[0].screenX;
-            touchStartY = e.changedTouches[0].screenY;
-        }, {passive: false});
-        
-        canvas.addEventListener('touchend', e => {
-            if (gameState !== 'PLAYING') return;
-            const touchEndX = e.changedTouches[0].screenX;
-            const touchEndY = e.changedTouches[0].screenY;
-            const dx = touchEndX - touchStartX;
-            const dy = touchEndY - touchStartY;
-            
-            if (Math.abs(dx) < 30 && Math.abs(dy) < 30) {
-                player.jump(); return;
-            }
-            if (Math.abs(dx) > Math.abs(dy)) {
-                if (Math.abs(dx) > 20) {
-                    if (dx > 0) player.moveRight();
-                    else player.moveLeft();
-                }
-            } else {
-                if (dy < -20) player.jump();
-            }
-        }, {passive: false});
-
-        function handleInput(e) {
-            if (gameState !== 'PLAYING') return;
-            if (e.key === 'ArrowLeft') player.moveLeft();
-            if (e.key === 'ArrowRight') player.moveRight();
-            if (e.key === 'ArrowUp' || e.key === ' ') player.jump();
-        }
-
-        function resizeCanvas() {
-            cw = window.innerWidth;
-            ch = window.innerHeight - 48;
-            canvas.width = cw;
-            canvas.height = ch;
-            
-            const maxPlayWidth = 600;
-            const actualPlayWidth = Math.min(cw, maxPlayWidth);
-            laneWidth = actualPlayWidth / 3;
-        }
-
-        // --- Classes ---
-
-        class Player {
-            constructor() { this.reset(); }
-            reset() {
-                this.lane = 1;
-                this.targetLane = 1;
-                this.laneX = this.getLaneCenter(1);
-                this.x = this.laneX;
-                this.y = ch - ch * 0.2; 
-                this.jumping = false;
-                this.jumpHeight = 0;
-                this.jumpVel = 0;
-                this.jumpGravity = 1200;
-                this.jumpForce = 600;
-                this.bobPhase = 0;
-            }
-            getLaneCenter(laneIndex) {
-                const totalWidth = Math.min(cw, 600);
-                const margin = (cw - totalWidth) / 2;
-                return margin + (laneIndex * laneWidth) + (laneWidth / 2);
-            }
-            moveLeft() { if (this.targetLane > 0) this.targetLane--; }
-            moveRight() { if (this.targetLane < 2) this.targetLane++; }
-            jump() { if (!this.jumping) { this.jumping = true; this.jumpVel = -this.jumpForce; } }
-            
-            update(dt) {
-                const targetX = this.getLaneCenter(this.targetLane);
-                this.x += (targetX - this.x) * 15 * dt; 
-
-                if (this.jumping) {
-                    this.jumpVel += this.jumpGravity * dt;
-                    this.jumpHeight -= this.jumpVel * dt; 
-                    if (this.jumpHeight <= 0) {
-                        this.jumpHeight = 0;
-                        this.jumping = false;
-                        spawnParticles(this.x, this.y, 'dust', 4);
-                    }
-                }
-                this.bobPhase += 10 * dt;
-            }
-
-            draw(ctx) {
-                const yOffset = -this.jumpHeight;
-                const bob = this.jumping ? 0 : Math.sin(this.bobPhase) * 5;
-                
-                // Draw cached sprite centered
-                const size = 80; 
-                ctx.drawImage(sprites.cat, this.x - size/2, this.y + yOffset + bob - size/2);
-                
-                // Engine Flame if jumping
-                if (this.jumping) {
-                    ctx.fillStyle = '#f472b6';
-                    ctx.globalAlpha = 0.7;
-                    const flameH = Math.random() * 20 + 10;
-                    ctx.beginPath();
-                    ctx.ellipse(this.x - 12, this.y + yOffset + 15, 3, flameH, 0, 0, Math.PI*2);
-                    ctx.ellipse(this.x + 8, this.y + yOffset + 15, 3, flameH, 0, 0, Math.PI*2);
-                    ctx.fill();
-                    ctx.globalAlpha = 1.0;
-                }
-            }
-        }
-
-        class Obstacle {
-            constructor() { this.active = false; }
-            spawn(laneIndex) {
-                this.laneIndex = laneIndex;
-                this.x = player.getLaneCenter(laneIndex);
-                this.y = -100;
-                this.active = true;
-            }
-            update(dt) {
-                this.y += gameSpeed * dt;
-                if (this.y > ch + 100) this.active = false;
-            }
-            draw(ctx) {
-                const size = 60;
-                ctx.drawImage(sprites.obstacle, this.x - size/2, this.y - size/2);
-            }
-        }
-
-        class Collectible {
-            constructor() { this.active = false; }
-            spawn(laneIndex) {
-                this.laneIndex = laneIndex;
-                this.x = player.getLaneCenter(laneIndex);
-                this.y = -100;
-                this.active = true;
-                this.bobOffset = Math.random() * 10;
-            }
-            update(dt) {
-                this.y += gameSpeed * dt;
-                if (this.y > ch + 100) this.active = false;
-            }
-            draw(ctx) {
-                const bob = Math.sin(Date.now() / 200 + this.bobOffset) * 5;
-                const size = 60;
-                ctx.drawImage(sprites.fish, this.x - size/2, this.y - size/2 + bob);
-            }
-        }
-
-        class Particle {
-            constructor() { this.active = false; }
-            spawn(x, y, type) {
-                this.x = x; this.y = y;
-                const angle = Math.random() * Math.PI * 2;
-                const speed = Math.random() * 100 + 50;
-                this.vx = Math.cos(angle) * speed;
-                this.vy = Math.sin(angle) * speed;
-                this.life = 1.0;
-                this.color = type === 'dust' ? '#22d3ee' : '#fbbf24';
-                this.active = true;
-            }
-            update(dt) {
-                this.x += this.vx * dt;
-                this.y += this.vy * dt;
-                this.life -= 3 * dt;
-                if (this.life <= 0) this.active = false;
-            }
-            draw(ctx) {
-                ctx.globalAlpha = this.life;
-                ctx.fillStyle = this.color;
-                ctx.fillRect(this.x, this.y, 3, 3); // Simple squares are fastest
-                ctx.globalAlpha = 1.0;
-            }
-        }
-
-        // --- Pooling ---
-        const obstaclePool = [];
-        const collectiblePool = [];
-        const particlePool = [];
-
-        function spawnParticles(x, y, type, count) {
-            for(let i=0; i<count; i++) {
-                let p = particlePool.length > 0 ? particlePool.pop() : new Particle();
-                p.spawn(x, y, type);
-                particles.push(p);
-            }
-        }
-        function getObstacle(lane) {
-            let o = obstaclePool.length > 0 ? obstaclePool.pop() : new Obstacle();
-            o.spawn(lane);
-            return o;
-        }
-        function getCollectible(lane) {
-            let c = collectiblePool.length > 0 ? collectiblePool.pop() : new Collectible();
-            c.spawn(lane);
-            return c;
-        }
-
-        // --- Loop ---
-
-        function initGame() {
-            initSprites();
-            resizeCanvas();
-            
-            if (!player) player = new Player();
-            player.reset();
-            
-            obstacles = [];
-            collectibles = [];
-            particles = [];
-
-            score = 0;
-            gameSpeed = 300; 
-            lastLeaderboardUpdate = 0;
-            updateHUD();
-        }
-
-        function update(dt) {
-            gameSpeed += 5 * dt; 
-            backgroundOffset += gameSpeed * dt;
-            
-            player.update(dt);
-            
-            // Update live leaderboard every 3 seconds
-            lastLeaderboardUpdate += dt;
-            if (lastLeaderboardUpdate > 3) {
-                lastLeaderboardUpdate = 0;
-                updateLiveRank();
-            }
-
-            // Optimized spawning with difficulty curve
-            const spawnChance = Math.min(0.02 + (score / 100000), 0.05);
-            if (Math.random() < spawnChance) {
-                const lane = Math.floor(Math.random() * 3);
-                const safe = ![...obstacles, ...collectibles].some(e => e.laneIndex === lane && e.y < 100);
-                if (safe) {
-                    // More coins at start, more obstacles later
-                    const coinChance = Math.max(0.6 - (score / 5000), 0.3);
-                    if (Math.random() < coinChance) collectibles.push(getCollectible(lane));
-                    else obstacles.push(getObstacle(lane));
-                }
-            }
-
-            [obstacles, collectibles, particles].forEach(list => {
-                for (let i = list.length - 1; i >= 0; i--) {
-                    let e = list[i];
-                    e.update(dt);
-                    if (!e.active) {
-                        if(list === obstacles) obstaclePool.push(e);
-                        if(list === collectibles) collectiblePool.push(e);
-                        if(list === particles) particlePool.push(e);
-                        list.splice(i, 1);
-                    }
-                }
-            });
-
-            checkCollisions();
-        }
-
-        function checkCollisions() {
-            // Optimized collision detection with early exit
-            const playerY = player.y - player.jumpHeight;
-            
-            for (let i = collectibles.length - 1; i >= 0; i--) {
-                const c = collectibles[i];
-                if (!c.active) continue;
-                
-                const dist = Math.hypot(player.x - c.x, playerY - c.y);
-                if (dist < 40) {
-                    c.active = false;
-                    score += 100;
-                    updateHUD();
-                    spawnParticles(c.x, c.y, 'gold', 5);
-                }
-            }
-
-            for (let i = 0; i < obstacles.length; i++) {
-                const o = obstacles[i];
-                if (!o.active) continue;
-                
-                // Skip if player is high enough
-                if (player.jumpHeight > 60) continue;
-                
-                if (Math.abs(player.x - o.x) < 25 && Math.abs(playerY - o.y) < 35) {
-                    gameOver();
-                    return;
-                }
-            }
-        }
-
-        function draw() {
-            // Clear with performance optimization
-            ctx.fillStyle = colors.bg;
-            ctx.fillRect(0, 0, cw, ch);
-
-            const totalWidth = Math.min(cw, 600);
-            const margin = (cw - totalWidth) / 2;
-
-            // Grid Floor (Perspective Hack) - Optimized
-            ctx.strokeStyle = colors.grid;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            for(let i = 0; i <= 3; i++) {
-                const x = margin + (i * laneWidth);
-                ctx.moveTo(x, 0); ctx.lineTo(x, ch);
-            }
-            ctx.stroke();
-
-            // Horizontal Moving Lines with speed effect
-            const gridSize = 80;
-            const offset = backgroundOffset % gridSize;
-            for(let y = offset; y < ch; y += gridSize) {
-                ctx.moveTo(margin, y); ctx.lineTo(margin + totalWidth, y);
-            }
-            ctx.stroke();
-
-            // Side Glows with pulsing effect
-            const pulse = Math.sin(Date.now() / 500) * 0.05 + 0.1;
-            ctx.fillStyle = colors.gridLight;
-            ctx.globalAlpha = pulse;
-            ctx.fillRect(margin - 2, 0, 2, ch);
-            ctx.fillRect(margin + totalWidth, 0, 2, ch);
-            ctx.globalAlpha = 1.0;
-
-            // Optimized rendering with depth sorting
-            const renderList = [player, ...obstacles, ...collectibles];
-            renderList.sort((a, b) => a.y - b.y);
-            
-            // Batch render by type for better performance
-            renderList.forEach(e => e.draw(ctx));
-            
-            // Render particles last (alpha blending)
-            if (particles.length > 0) {
-                particles.forEach(p => p.draw(ctx));
-            }
-        }
-
-        function loop(timestamp) {
-            if (gameState !== 'PLAYING') return;
-            if (!lastTime) lastTime = timestamp;
-            const dt = Math.min((timestamp - lastTime) / 1000, 0.1);
-            lastTime = timestamp;
-            update(dt);
-            draw();
-            frameId = requestAnimationFrame(loop);
-        }
-
-        // --- UI ---
-        function startGame() {
-            // Clear previous game state
-            if (player) player.reset();
-            obstacles = [];
-            collectibles = [];
-            particles = [];
-            score = 0;
-            gameSpeed = 300;
-            lastLeaderboardUpdate = 0;
-            
-            initGame();
-            gameState = 'PLAYING';
-            gameStartTime = Date.now(); // Track start time
-            
-            document.getElementById('hud').classList.remove('hidden-screen');
-            lastTime = 0;
-            requestAnimationFrame(loop);
-        }
-
-        function updateHUD() {
-            document.getElementById('scoreDisplay').innerText = score;
-        }
-        
-        // Update live leaderboard rank
-        async function updateLiveRank() {
-            if (!currentUser || score === 0) return;
-            
-            try {
-                const response = await fetch(`${CONFIG.API_ENDPOINT}/live-rank`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fid: currentUser.fid,
-                        score: score
-                    })
-                });
-                
-                if (!response.ok) {
-                    console.warn('live-rank HTTP error', response.status);
-                    return;
-                }
-
-                const data = await response.json().catch(() => ({}));
-                const rankValue = Number(data.rank);
-                if (!Number.isFinite(rankValue) || rankValue <= 0) return;
-
-                currentRank = rankValue;
-                
-                const rankEl = document.getElementById('liveRank');
-                rankEl.textContent = `#${currentRank}`;
-                
-                // Color based on rank
-                if (currentRank <= 5) {
-                    rankEl.className = 'text-yellow-400 font-bold game-font ml-2';
-                } else if (currentRank <= 20) {
-                    rankEl.className = 'text-green-400 font-bold game-font ml-2';
-                } else {
-                    rankEl.className = 'text-cyan-400 font-bold game-font ml-2';
-                }
-            } catch (error) {
-                console.error('❌ Live rank update failed:', error);
-            }
-        }
-
-        async function gameOver() {
-            gameState = 'GAMEOVER';
-            cancelAnimationFrame(frameId);
-            
-            document.getElementById('finalScore').innerText = score;
-            document.getElementById('hud').classList.add('hidden-screen');
-            
-            // Submit final score
-            const result = await submitScore(score);
-            
-            // Update payout estimate
-            const estRank = Number(result.rank);
-            const estPayout = Number.parseFloat(result.payout);
-            if (Number.isFinite(estRank) && estRank > 0 && estRank <= 20 && Number.isFinite(estPayout)) {
-                document.getElementById('estPayout').textContent = `$${estPayout.toFixed(2)}`;
-            } else {
-                document.getElementById('estPayout').textContent = '$0.00';
-            }
-            
-            const go = document.getElementById('gameOverScreen');
-            go.classList.remove('hidden-screen');
-            go.classList.add('active-screen');
-        }
-
-        // Initialize on load
-        window.addEventListener('load', () => {
-            if (typeof ethers === 'undefined') {
-                // Retry once after short delay if CDN is slow
-                setTimeout(() => {
-                    if (typeof ethers === 'undefined') {
-                        alert('Failed to load libraries. Please refresh.');
-                    } else {
-                        initApp();
-                    }
-                }, 1000);
-            } else {
-                initApp();
-            }
-        });
-
-        window.addEventListener('beforeunload', () => {
-            if (countdownInterval) clearInterval(countdownInterval);
-        });
+        document.getElementById('statusText').textContent = typeof ethers !== 'undefined'
+            ? '👇 Click CONNECT WALLET'
+            : '❌ Failed to load ethers';
     </script>
 </body>
 </html>
