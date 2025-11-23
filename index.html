@@ -3,17 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta property="fc:frame" content="vNext">
-    <meta property="fc:frame:image" content="https://far-meow.app/og-image.png">
-    <meta property="og:image" content="https://far-meow.app/og-image.png"> <!-- Added for social sharing -->
-    <meta property="og:title" content="Far Meow - Cat Running Game">
-    <meta property="og:description" content="Compete for hourly USDC prizes! 🐱⚡">
-    <meta property="fc:frame:button:1" content="Play Far Meow 🐱">
-    <meta property="fc:frame:button:1:action" content="link">
-    <meta property="fc:frame:button:1:target" content="https://far-meow.app">
     <title>Far Meow: Cat Running Game 🐱⚡</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/@farcaster/frame-sdk@0.1.5/dist/frame-sdk.umd.js"></script>
     <script src="https://cdn.ethers.io/lib/ethers-5.7.2.umd.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
     <style>
@@ -235,23 +226,15 @@
     </div>
 
     <script>
-        // ============================================
-        // FARCASTER & WALLET INTEGRATION
-        // ============================================
-        
         const CONFIG = {
             VAULT_CONTRACT: '0xaf08c8f5100Afd8aE30f40751ED85B125b873f77',
             USDC_ADDRESS: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
             BASE_CHAIN_ID: 84532,
             ENTRY_FEE: '250000',
-            API_ENDPOINT: '', // Empty = mock mode for now
-            NEYNAR_API_KEY: 'NEYNAR_API_DOCS', // Get free key at https://neynar.com
             MAX_SCORE: 999999,
-            MIN_GAME_DURATION: 5000,
-            MAX_SUBMISSIONS_PER_HOUR: 10
+            MIN_GAME_DURATION: 5000
         };
 
-        let farcasterSDK = null;
         let ethersProvider = null;
         let currentUser = null;
         let vaultContract = null;
@@ -259,19 +242,15 @@
         let currentPot = 0;
         let currentRoundId = null;
         let gameStartTime = null;
-        let isProcessingPayment = false; // Prevent double-spend
+        let isProcessingPayment = false;
         let countdownInterval = null;
-        let sessionToken = null; // Backend-issued token after payment
-        let submissionCount = 0; // Rate limiting
-        let leaderboardData = [];
         
-        // ABI for contracts (minimal)
         const VAULT_ABI = [
             "function payEntry() external",
-            "function commitScore(bytes32) external", // ADDED
+            "function commitScore(bytes32) external",
             "function getCurrentRound() view returns (uint256, uint256, uint256, uint256, bool)",
             "function getPlayerScore(address) view returns (uint256)",
-            "function claimPrize(uint256) external",
+            "function getTopPlayers(uint256) view returns (address[], uint256[])",
             "function estimatePayout(uint256) view returns (uint256)"
         ];
         
@@ -281,137 +260,56 @@
             "function allowance(address owner, address spender) view returns (uint256)"
         ];
 
-        // Initialize Farcaster SDK
-        async function initFarcaster() {
-            try {
-                // Check if running inside Farcaster
-                const sdk = window.frameSDK;
-                
-                if (sdk) {
-                    // Inside Farcaster frame
-                    await sdk.actions.ready();
-                    const context = await sdk.context;
-                    currentUser = context.user;
-                    
-                    if (currentUser) {
-                        document.getElementById('farcasterStatus').textContent = `@${currentUser.username}`;
-                        
-                        // Get wallet from frame SDK
-                        ethersProvider = new ethers.providers.Web3Provider(sdk.wallet.ethProvider);
-                        farcasterSDK = sdk;
-                    }
-                } else {
-                    // Outside Farcaster - use regular Web3
-                    document.getElementById('farcasterStatus').textContent = 'CONNECT WALLET';
-                    
-                    // Show connect button
-                    showConnectWalletButton();
-                    return;
-                }
+        // ============================================
+        // WALLET CONNECTION
+        // ============================================
 
-                const network = await ethersProvider.getNetwork();
-                if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
-                    console.warn('Wrong network detected:', network.chainId);
-                    document.getElementById('farcasterStatus').textContent = 'SWITCH TO BASE';
-                    alert('Please switch to Base network in your wallet.');
-                    return;
-                }
-
-                if (!CONFIG.VAULT_CONTRACT || CONFIG.VAULT_CONTRACT === '0x...') {
-                    console.warn('VAULT_CONTRACT not configured');
-                    document.getElementById('farcasterStatus').textContent = 'CONFIG ERROR';
-                    return;
-                }
-                
-                const signer = ethersProvider.getSigner();
-                vaultContract = new ethers.Contract(CONFIG.VAULT_CONTRACT, VAULT_ABI, signer);
-                usdcContract = new ethers.Contract(CONFIG.USDC_ADDRESS, ERC20_ABI, signer);
-                
-                await verifyPlayer();
-                await loadVaultData();
-                await updateBalance();
-                await loadLeaderboard(); // Add this
-                
-                setInterval(loadVaultData, 10000);
-                setInterval(updateBalance, 30000);
-                setInterval(loadLeaderboard, 15000); // Refresh every 15 seconds
-                
-                console.log('✅ Farcaster initialized:', currentUser.username);
-                
-            } catch (error) {
-                console.error('❌ Farcaster init failed:', error);
-                document.getElementById('farcasterStatus').textContent = 'ERROR';
-            }
-        }
-
-        // Add wallet connection for non-Farcaster users
-        function showConnectWalletButton() {
-            const statusDiv = document.querySelector('#farcasterStatus').parentElement;
-            statusDiv.innerHTML = `
-                <button onclick="connectWallet()" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-white font-bold text-xs transition-colors">
-                    CONNECT WALLET
-                </button>
-            `;
-        }
-
-        // Connect wallet via MetaMask/Coinbase Wallet
         async function connectWallet() {
             try {
                 if (!window.ethereum) {
                     alert('Please install MetaMask or Coinbase Wallet to play!');
+                    window.open('https://metamask.io/download/', '_blank');
                     return;
                 }
 
-                // Request wallet connection
                 await window.ethereum.request({ method: 'eth_requestAccounts' });
-                
                 ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
                 const signer = ethersProvider.getSigner();
                 const address = await signer.getAddress();
                 
-                // Check network
+                // Check/switch to Base Sepolia
                 const network = await ethersProvider.getNetwork();
                 if (network.chainId !== CONFIG.BASE_CHAIN_ID) {
-                    // Request network switch
                     try {
                         await window.ethereum.request({
                             method: 'wallet_switchEthereumChain',
-                            params: [{ chainId: '0x14a34' }], // 84532 in hex
+                            params: [{ chainId: '0x14a34' }],
                         });
+                        // Reload provider after network switch
+                        ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
                     } catch (switchError) {
-                        // Add network if not exists
                         if (switchError.code === 4902) {
                             await window.ethereum.request({
                                 method: 'wallet_addEthereumChain',
                                 params: [{
                                     chainId: '0x14a34',
                                     chainName: 'Base Sepolia',
-                                    nativeCurrency: {
-                                        name: 'ETH',
-                                        symbol: 'ETH',
-                                        decimals: 18
-                                    },
+                                    nativeCurrency: { name: 'ETH', symbol: 'ETH', decimals: 18 },
                                     rpcUrls: ['https://sepolia.base.org'],
                                     blockExplorerUrls: ['https://sepolia.basescan.org']
                                 }]
                             });
+                            ethersProvider = new ethers.providers.Web3Provider(window.ethereum);
                         }
                     }
                 }
 
-                // Try to fetch Farcaster profile from Neynar
-                currentUser = await fetchFarcasterProfile(address);
-                
-                if (currentUser) {
-                    document.getElementById('farcasterStatus').textContent = `@${currentUser.username}`;
-                } else {
-                    document.getElementById('farcasterStatus').textContent = `${address.slice(0, 6)}...${address.slice(-4)}`;
-                    currentUser = { 
-                        fid: 0, 
-                        username: address.slice(0, 8),
-                        address: address
-                    };
-                }
+                currentUser = { 
+                    address: address,
+                    username: `${address.slice(0, 6)}...${address.slice(-4)}`
+                };
+
+                document.getElementById('farcasterStatus').textContent = currentUser.username;
 
                 // Initialize contracts
                 const signerInstance = ethersProvider.getSigner();
@@ -420,121 +318,42 @@
                 
                 await loadVaultData();
                 await updateBalance();
-                await loadLeaderboard();
+                await loadLeaderboardFromContract();
                 
                 setInterval(loadVaultData, 10000);
                 setInterval(updateBalance, 30000);
-                setInterval(loadLeaderboard, 15000);
+                setInterval(loadLeaderboardFromContract, 15000);
                 
                 console.log('✅ Wallet connected:', address);
                 
             } catch (error) {
                 console.error('❌ Wallet connection failed:', error);
-                alert('Failed to connect wallet. Please try again.');
+                alert('Failed to connect wallet: ' + error.message);
             }
         }
 
-        // Fetch Farcaster profile using Neynar API
-        async function fetchFarcasterProfile(address) {
-            if (!CONFIG.NEYNAR_API_KEY || CONFIG.NEYNAR_API_KEY === 'NEYNAR_API_DOCS') {
-                console.log('No Neynar API key configured');
-                return null;
-            }
-
-            try {
-                const response = await fetch(
-                    `https://api.neynar.com/v2/farcaster/user/bulk-by-address?addresses=${address}`,
-                    {
-                        headers: {
-                            'api_key': CONFIG.NEYNAR_API_KEY,
-                            'accept': 'application/json'
-                        }
-                    }
-                );
-
-                if (!response.ok) {
-                    console.warn('Neynar API error:', response.status);
-                    return null;
-                }
-
-                const data = await response.json();
-                
-                if (data && data[address] && data[address].length > 0) {
-                    const user = data[address][0];
-                    return {
-                        fid: user.fid,
-                        username: user.username,
-                        address: address,
-                        pfp_url: user.pfp_url
-                    };
-                }
-                
-                return null;
-                
-            } catch (error) {
-                console.error('Failed to fetch Farcaster profile:', error);
-                return null;
-            }
+        function showConnectButton() {
+            const statusDiv = document.getElementById('farcasterStatus');
+            statusDiv.innerHTML = `<button onclick="connectWallet()" class="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white font-bold text-xs transition-colors">CONNECT</button>`;
         }
 
-        // Verify player with backend
-        async function verifyPlayer() {
-            if (!currentUser || !ethersProvider) return;
-            
-            // Mock mode - skip backend verification
-            if (!CONFIG.API_ENDPOINT) {
-                console.log('Mock: Player verified');
-                return;
-            }
-            
-            try {
-                const address = await ethersProvider.getSigner().getAddress();
-                
-                if (!ethers.utils.isAddress(address)) {
-                    throw new Error('Invalid wallet address');
-                }
+        // ============================================
+        // LOAD DATA FROM BLOCKCHAIN
+        // ============================================
 
-                const response = await fetch(`${CONFIG.API_ENDPOINT}/verify-player`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fid: currentUser.fid,
-                        username: currentUser.username,
-                        address: address
-                    })
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`Verification failed: ${response.status}`);
-                }
-                
-                const data = await response.json();
-                console.log('✅ Player verified:', data);
-                
-            } catch (error) {
-                console.error('❌ Verification failed:', error);
-            }
-        }
-
-        // Load vault data from contract
         async function loadVaultData() {
             if (!vaultContract) return;
             try {
                 const roundData = await vaultContract.getCurrentRound();
                 
-                // REMOVED: isActive check (not in ABI return type)
-                
                 currentRoundId = roundData[0].toNumber();
                 const vaultAmount = ethers.utils.formatUnits(roundData[1], 6);
                 const timeRemaining = roundData[3].toNumber();
                 
-                currentPot = Number.isFinite(parseFloat(vaultAmount))
-                    ? parseFloat(vaultAmount)
-                    : 0;
+                currentPot = parseFloat(vaultAmount);
 
-                const potDisplay = Math.floor(currentPot).toLocaleString();
-                document.getElementById('potValue').textContent = potDisplay;
-                document.getElementById('potValueSmall').textContent = potDisplay;
+                document.getElementById('potValue').textContent = Math.floor(currentPot).toLocaleString();
+                document.getElementById('potValueSmall').textContent = Math.floor(currentPot).toLocaleString();
                 
                 startCountdown(timeRemaining);
                 updatePayoutEstimates(currentPot);
@@ -544,7 +363,94 @@
             }
         }
 
-        // Start actual countdown timer
+        async function updateBalance() {
+            if (!usdcContract || !ethersProvider) return;
+            try {
+                const signer = ethersProvider.getSigner();
+                const address = await signer.getAddress();
+                const balance = await usdcContract.balanceOf(address);
+                const formatted = ethers.utils.formatUnits(balance, 6);
+                document.getElementById('walletBalance').textContent = `${parseFloat(formatted).toFixed(2)} USDC`;
+            } catch (error) {
+                console.error('❌ Balance update failed:', error);
+            }
+        }
+
+        async function loadLeaderboardFromContract() {
+            if (!vaultContract || !currentRoundId) {
+                document.getElementById('leaderboardList').innerHTML = 
+                    '<div class="text-center py-8 text-cyan-400 text-sm">Connect wallet to view leaderboard</div>';
+                return;
+            }
+            
+            try {
+                const [addresses, scores] = await vaultContract.getTopPlayers(currentRoundId);
+                
+                if (!addresses || addresses.length === 0) {
+                    document.getElementById('leaderboardList').innerHTML = 
+                        '<div class="text-center py-8 text-cyan-400 text-sm">No players yet. Be the first!</div>';
+                    return;
+                }
+                
+                let html = '';
+                
+                for (let i = 0; i < Math.min(addresses.length, 100); i++) {
+                    const rank = i + 1;
+                    const rankClass = rank === 1 ? 'rank-1' : 
+                                     rank === 2 ? 'rank-2' : 
+                                     rank === 3 ? 'rank-3' : 'rank-other';
+                    
+                    const score = scores[i].toNumber();
+                    const payout = await vaultContract.estimatePayout(i);
+                    const payoutFormatted = parseFloat(ethers.utils.formatUnits(payout, 6));
+                    
+                    const addr = addresses[i];
+                    const shortAddr = `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+                    
+                    const isCurrentUser = currentUser && addr.toLowerCase() === currentUser.address.toLowerCase();
+                    const highlightClass = isCurrentUser ? 'bg-cyan-900/30 border border-cyan-500/50' : '';
+                    
+                    html += `
+                        <div class="leaderboard-row flex items-center justify-between p-2 rounded-lg ${highlightClass}">
+                            <div class="flex items-center gap-3 flex-1 min-w-0">
+                                <div class="rank-badge ${rankClass} text-xs flex-shrink-0">${rank}</div>
+                                <div class="flex-1 min-w-0">
+                                    <div class="text-white font-bold text-sm truncate">
+                                        ${isCurrentUser ? '👤 ' : ''}${shortAddr}
+                                    </div>
+                                    <div class="text-cyan-400 text-xs">${score.toLocaleString()} pts</div>
+                                </div>
+                            </div>
+                            <div class="text-right flex-shrink-0">
+                                <div class="text-yellow-400 font-bold text-sm">
+                                    ${payoutFormatted > 0 ? `$${payoutFormatted.toFixed(2)}` : '-'}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                document.getElementById('leaderboardList').innerHTML = html;
+                
+            } catch (error) {
+                console.error('❌ Leaderboard load failed:', error);
+                document.getElementById('leaderboardList').innerHTML = 
+                    '<div class="text-center py-8 text-red-400 text-sm">Failed to load leaderboard</div>';
+            }
+        }
+
+        async function refreshLeaderboard() {
+            const icon = document.getElementById('refreshIcon');
+            icon.style.transform = 'rotate(360deg)';
+            icon.style.transition = 'transform 0.5s ease';
+            
+            await loadLeaderboardFromContract();
+            
+            setTimeout(() => {
+                icon.style.transform = 'rotate(0deg)';
+            }, 500);
+        }
+
         function startCountdown(seconds) {
             if (countdownInterval) clearInterval(countdownInterval);
             
@@ -569,7 +475,6 @@
             countdownInterval = setInterval(updateDisplay, 1000);
         }
 
-        // Update payout estimates
         function updatePayoutEstimates(vaultAmount) {
             const vault = parseFloat(vaultAmount);
             if (!Number.isFinite(vault)) return;
@@ -577,150 +482,25 @@
             const elems = document.querySelectorAll('.grid .text-white.font-bold');
             if (elems.length < 3) return;
 
-            // Match Solidity: 1st = 25.5%, 10th = 2.5%, 20th = 2.5%
-            elems[0].textContent = `$${Math.floor(vault * 0.255)}`; // 1st Place
-            elems[1].textContent = `$${Math.floor(vault * 0.025)}`; // 10th Place (2.5%)
-            elems[2].textContent = `$${Math.floor(vault * 0.025)}`; // 20th Place (2.5%)
+            elems[0].textContent = `$${Math.floor(vault * 0.255)}`;
+            elems[1].textContent = `$${Math.floor(vault * 0.025)}`;
+            elems[2].textContent = `$${Math.floor(vault * 0.025)}`;
         }
 
-        // Update USDC balance
-        async function updateBalance() {
-            if (!usdcContract || !ethersProvider) return;
-            try {
-                const signer = ethersProvider.getSigner();
-                const address = await signer.getAddress();
-                const balance = await usdcContract.balanceOf(address);
-                const formatted = ethers.utils.formatUnits(balance, 6);
-                const num = parseFloat(formatted);
-                const safe = Number.isFinite(num) ? num : 0;
-                document.getElementById('walletBalance').textContent = `${safe.toFixed(2)} USDC`;
-            } catch (error) {
-                console.error('❌ Balance update failed:', error);
-            }
-        }
+        // ============================================
+        // PAYMENT
+        // ============================================
 
-        // Load leaderboard data
-        async function loadLeaderboard() {
-            // Mock mode - use fake data
-            if (!CONFIG.API_ENDPOINT) {
-                leaderboardData = [
-                    { username: 'Alice', score: 5000, estimatedPayout: 310, fid: 1 },
-                    { username: 'Bob', score: 4500, estimatedPayout: 186, fid: 2 },
-                    { username: 'Charlie', score: 4000, estimatedPayout: 124, fid: 3 },
-                    { username: 'Diana', score: 3500, estimatedPayout: 87, fid: 4 },
-                    { username: 'Eve', score: 3000, estimatedPayout: 62, fid: 5 },
-                ];
-                renderLeaderboard();
-                return;
-            }
-            
-            try {
-                const response = await fetch(`${CONFIG.API_ENDPOINT}/leaderboard?limit=100`);
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
-                
-                const data = await response.json();
-                leaderboardData = Array.isArray(data.players) ? data.players : [];
-                
-                renderLeaderboard();
-                
-            } catch (error) {
-                console.error('❌ Leaderboard load failed:', error);
-                document.getElementById('leaderboardList').innerHTML = 
-                    '<div class="text-center py-8 text-red-400 text-sm">Failed to load leaderboard</div>';
-            }
-        }
-
-        // Refresh leaderboard with animation
-        async function refreshLeaderboard() {
-            const icon = document.getElementById('refreshIcon');
-            icon.style.transform = 'rotate(360deg)';
-            icon.style.transition = 'transform 0.5s ease';
-            
-            await loadLeaderboard();
-            
-            setTimeout(() => {
-                icon.style.transform = 'rotate(0deg)';
-            }, 500);
-        }
-
-        // Render leaderboard UI
-        function renderLeaderboard() {
-            const container = document.getElementById('leaderboardList');
-            
-            if (!leaderboardData || leaderboardData.length === 0) {
-                container.innerHTML = 
-                    '<div class="text-center py-8 text-cyan-400 text-sm">No players yet. Be the first!</div>';
-                return;
-            }
-            
-            let html = '';
-            
-            leaderboardData.forEach((player, index) => {
-                const rank = index + 1;
-                const rankClass = rank === 1 ? 'rank-1' : 
-                                 rank === 2 ? 'rank-2' : 
-                                 rank === 3 ? 'rank-3' : 'rank-other';
-                
-                const score = Number(player.score) || 0;
-                const payout = Number(player.estimatedPayout) || 0;
-                // Sanitize username to prevent XSS
-                const name = (player.username || player.address?.slice(0, 6) || 'Anonymous').replace(/[<>]/g, '');
-                
-                // Highlight current user
-                const isCurrentUser = currentUser && (
-                    player.fid === currentUser.fid || 
-                    player.username === currentUser.username
-                );
-                const highlightClass = isCurrentUser ? 'bg-cyan-900/30 border border-cyan-500/50' : '';
-                
-                html += `
-                    <div class="leaderboard-row flex items-center justify-between p-2 rounded-lg ${highlightClass}">
-                        <div class="flex items-center gap-3 flex-1 min-w-0">
-                            <div class="rank-badge ${rankClass} text-xs flex-shrink-0">
-                                ${rank}
-                            </div>
-                            <div class="flex-1 min-w-0">
-                                <div class="text-white font-bold text-sm truncate">
-                                    ${isCurrentUser ? '👤 ' : ''}${name}
-                                </div>
-                                <div class="text-cyan-400 text-xs">
-                                    ${score.toLocaleString()} pts
-                                </div>
-                            </div>
-                        </div>
-                        <div class="text-right flex-shrink-0">
-                            <div class="text-yellow-400 font-bold text-sm">
-                                ${payout > 0 ? `$${payout.toFixed(2)}` : '-'}
-                            </div>
-                        </div>
-                    </div>
-                `;
-            });
-            
-            container.innerHTML = html;
-        }
-
-        // Initiate payment and game start
         async function initiatePayment() {
-            if (isProcessingPayment) {
-                console.warn('Payment already in progress');
-                return;
-            }
+            if (isProcessingPayment) return;
 
             if (!ethersProvider || !vaultContract || !usdcContract) {
-                alert('Please connect your wallet first!');
-                if (!farcasterSDK) {
-                    await connectWallet();
-                }
+                await connectWallet();
                 return;
             }
 
-            // Check if round is still active
             if (!currentRoundId) {
-                alert('No active round. Please wait for the next round.');
+                alert('No active round. Please wait.');
                 return;
             }
             
@@ -739,74 +519,29 @@
                 const signer = ethersProvider.getSigner();
                 const address = await signer.getAddress();
                 
-                // Validate address
-                if (!ethers.utils.isAddress(address)) {
-                    throw new Error('Invalid wallet address');
-                }
-
-                // Check USDC balance
                 const balance = await usdcContract.balanceOf(address);
                 if (balance.lt(CONFIG.ENTRY_FEE)) {
-                    throw new Error('Insufficient USDC balance. You need at least 0.25 USDC.');
+                    throw new Error('Insufficient USDC. You need 0.25 USDC to play.');
                 }
                 
-                // Check allowance
                 const allowance = await usdcContract.allowance(address, CONFIG.VAULT_CONTRACT);
                 
                 if (allowance.lt(CONFIG.ENTRY_FEE)) {
-                    // Request exact amount approval instead of unlimited
-                    const approveAmount = ethers.BigNumber.from(CONFIG.ENTRY_FEE).mul(10); // Approve for 10 games
-                    
-                    // Estimate gas first
-                    const gasEstimate = await usdcContract.estimateGas.approve(
-                        CONFIG.VAULT_CONTRACT,
-                        approveAmount
-                    );
-                    
-                    const approveTx = await usdcContract.approve(
-                        CONFIG.VAULT_CONTRACT,
-                        approveAmount,
-                        { gasLimit: gasEstimate.mul(120).div(100) } // 20% buffer
-                    );
-                    
-                    await approveTx.wait(1); // Wait for 1 confirmation
+                    const approveAmount = ethers.BigNumber.from(CONFIG.ENTRY_FEE).mul(10);
+                    const gasEstimate = await usdcContract.estimateGas.approve(CONFIG.VAULT_CONTRACT, approveAmount);
+                    const approveTx = await usdcContract.approve(CONFIG.VAULT_CONTRACT, approveAmount, { gasLimit: gasEstimate.mul(120).div(100) });
+                    await approveTx.wait(1);
                 }
                 
-                // Estimate gas for payment
                 const gasEstimate = await vaultContract.estimateGas.payEntry();
-                
-                // Pay entry fee
-                const tx = await vaultContract.payEntry({
-                    gasLimit: gasEstimate.mul(120).div(100) // 20% buffer
-                });
-                
+                const tx = await vaultContract.payEntry({ gasLimit: gasEstimate.mul(120).div(100) });
                 const receipt = await tx.wait(1);
                 
-                // Verify transaction succeeded
                 if (receipt.status !== 1) {
                     throw new Error('Transaction failed');
                 }
                 
                 console.log('✅ Payment successful:', receipt.transactionHash);
-                
-                // Get session token from backend
-                const sessionResponse = await fetch(`${CONFIG.API_ENDPOINT}/create-session`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        fid: currentUser.fid,
-                        address: address,
-                        txHash: receipt.transactionHash,
-                        roundId: currentRoundId
-                    })
-                });
-                
-                if (sessionResponse.ok) {
-                    const sessionData = await sessionResponse.json();
-                    sessionToken = sessionData.token;
-                } else {
-                    console.warn('Failed to create session, continuing anyway');
-                }
                 
                 await updateBalance();
                 
@@ -821,9 +556,8 @@
                 console.error('❌ Payment failed:', error);
                 
                 let errorMsg = 'Payment failed. Please try again.';
-                
                 if (error.code === 'ACTION_REJECTED' || error.code === 4001) {
-                    errorMsg = 'Transaction rejected by user.';
+                    errorMsg = 'Transaction rejected.';
                 } else if (error.message) {
                     errorMsg = error.message;
                 }
@@ -839,128 +573,49 @@
             }
         }
 
-        // Submit score to backend and smart contract
+        // ============================================
+        // SCORE SUBMISSION
+        // ============================================
+
         async function submitScore(finalScore) {
             if (!currentUser || !vaultContract || !ethersProvider) {
                 return { rank: '--', payout: '0.00' };
             }
 
-            // Rate limiting
-            if (submissionCount >= CONFIG.MAX_SUBMISSIONS_PER_HOUR) {
-                console.error('❌ Rate limit exceeded');
-                return { rank: '--', payout: '0.00' };
-            }
-
-            // Anti-cheat checks
-            const gameDuration = Date.now() - gameStartTime;
-            if (gameDuration < CONFIG.MIN_GAME_DURATION) {
-                console.error('❌ Game too short, likely cheating');
-                return { rank: '--', payout: '0.00' };
-            }
-
-            if (finalScore > CONFIG.MAX_SCORE || finalScore < 0) {
-                console.error('❌ Invalid score range');
-                return { rank: '--', payout: '0.00' };
-            }
-
-            // Sanitize score
             const sanitizedScore = Math.floor(Number(finalScore));
-            if (!Number.isFinite(sanitizedScore)) {
+            if (!Number.isFinite(sanitizedScore) || sanitizedScore < 0 || sanitizedScore > CONFIG.MAX_SCORE) {
                 return { rank: '--', payout: '0.00' };
             }
             
             try {
                 const secret = ethers.utils.randomBytes(32);
                 const secretHex = ethers.utils.hexlify(secret);
-                
                 const commitment = ethers.utils.keccak256(
                     ethers.utils.defaultAbiCoder.encode(['uint256', 'bytes32'], [sanitizedScore, secretHex])
                 );
 
-                const address = await ethersProvider.getSigner().getAddress();
+                const commitTx = await vaultContract.commitScore(commitment);
+                await commitTx.wait(1);
+                console.log('✅ Score committed on-chain');
                 
-                // FIXED: Call commitScore FIRST (step 1 of commit-reveal)
-                try {
-                    const commitTx = await vaultContract.commitScore(commitment);
-                    await commitTx.wait(1);
-                    console.log('✅ Score committed on-chain');
-                } catch (e) {
-                    console.error('❌ Commit failed:', e);
-                    return { rank: '--', payout: '0.00' };
-                }
+                // Estimate rank and payout
+                await loadLeaderboardFromContract();
                 
-                // Then submit to backend (step 2)
-                const response = await fetch(`${CONFIG.API_ENDPOINT}/submit-score`, {
-                    method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'Authorization': sessionToken ? `Bearer ${sessionToken}` : ''
-                    },
-                    body: JSON.stringify({
-                        fid: currentUser.fid,
-                        address: address,
-                        score: sanitizedScore,
-                        secret: secretHex,
-                        commitment: commitment,
-                        roundId: currentRoundId,
-                        gameDuration: gameDuration,
-                        timestamp: Date.now()
-                    })
-                });
-
-                if (!response.ok) {
-                    console.error('❌ submit-score HTTP error', response.status);
-                    return { rank: '--', payout: '0.00' };
-                }
-                
-                const data = await response.json().catch(() => ({}));
-                
-                // Backend returns real rank (not random estimate)
-                const rank = Number.isFinite(Number(data.rank)) ? Number(data.rank) : 99;
-                
-                // Get payout from contract
-                let payout = '0.00';
-                if (rank > 0 && rank <= 20) {
-                    try {
-                        const payoutRaw = await vaultContract.estimatePayout(rank - 1);
-                        payout = ethers.utils.formatUnits(payoutRaw, 6);
-                    } catch (e) {
-                        console.warn('Failed to estimate payout:', e);
-                    }
-                }
-                
-                submissionCount++;
-                return { rank, payout };
+                return { rank: '--', payout: '0.00' };
                 
             } catch (error) {
                 console.error('❌ Score submission failed:', error);
                 return { rank: '--', payout: '0.00' };
             }
-forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v4.9.3 --no-commit
         }
 
-        // SIMPLIFIED: Share result via Warpcast only
         async function shareResult() {
             const safeScore = Number.isFinite(score) ? score : 0;
             const safePot = Number.isFinite(currentPot) ? Math.floor(currentPot) : 0;
             const shareText = `I just scored ${safeScore} points in Far Meow! 🐱⚡\n\nCompete for the $${safePot} prize pool!`;
-            const embedUrl = 'https://far-meow.app';
-            
-            // Warpcast compose URL
+            const embedUrl = 'https://farmeow.vercel.app';
             const warpcastUrl = `https://warpcast.com/~/compose?text=${encodeURIComponent(shareText)}&embeds%5B%5D=${encodeURIComponent(embedUrl)}`;
-
-            // Try SDK first, then fallback
-            if (farcasterSDK?.actions?.openUrl) {
-                try {
-                    await farcasterSDK.actions.openUrl(warpcastUrl);
-                    return;
-                } catch (e) {
-                    console.warn('SDK failed', e);
-                }
-            }
-
-            // Fallback: open in new window
-            window.open(warpcastUrl, '_blank', 'noopener,noreferrer');
+            window.open(warpcastUrl, '_blank');
         }
 
         // --- OPTIMIZED NEON SPRITE GENERATOR (The Secret Sauce) ---
@@ -1400,13 +1055,12 @@ forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v4.9.3 --no-commit
             ctx.strokeStyle = colors.grid;
             ctx.lineWidth = 1;
             ctx.beginPath();
-        // Cleanup on unload
-        window.addEventListener('beforeunload', () => {
-            if (countdownInterval) clearInterval(countdownInterval);
-        });     const x = margin + (i * laneWidth);
-    </script>   ctx.moveTo(x, 0); ctx.lineTo(x, ch);
-</body>     }
-</html>     
+            for(let i = 0; i <= 3; i++) {
+                const x = margin + (i * laneWidth);
+                ctx.moveTo(x, 0); ctx.lineTo(x, ch);
+            }
+            ctx.stroke();
+
             // Horizontal Moving Lines with speed effect
             const gridSize = 80;
             const offset = backgroundOffset % gridSize;
@@ -1533,23 +1187,14 @@ forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v4.9.3 --no-commit
             const go = document.getElementById('gameOverScreen');
             go.classList.remove('hidden-screen');
             go.classList.add('active-screen');
-            
-            // Clear session token after game ends
-            sessionToken = null;
         }
 
         // Initialize on load
-        window.addEventListener('load', async () => {
+        window.addEventListener('load', () => {
             resizeCanvas();
-            await initFarcaster();
-            
-            // If not in Farcaster, still load leaderboard
-            if (!currentUser) {
-                await loadLeaderboard();
-            }
+            showConnectButton();
         });
 
-        // Cleanup on unload
         window.addEventListener('beforeunload', () => {
             if (countdownInterval) clearInterval(countdownInterval);
         });
