@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -e # Exit on error
+set -e
 
 echo "🐱 Far Meow Deployment Script"
 echo "=============================="
@@ -16,27 +16,23 @@ NC='\033[0m' # No Color
 echo -e "${YELLOW}Step 1: Removing soldeer artifacts...${NC}"
 rm -rf dependencies
 rm -f soldeer.lock
-rm -f .gitmodules
 rm -rf lib
 
 echo -e "${GREEN}✓ Cleaned soldeer artifacts${NC}"
 echo ""
 
-# Step 2: Clean forge cache
-echo -e "${YELLOW}Step 2: Cleaning forge cache...${NC}"
+# Step 2: Remove soldeer from foundry.toml
+echo -e "${YELLOW}Step 2: Cleaning foundry.toml...${NC}"
+sed -i '/\[dependencies\]/,/^$/d' foundry.toml 2>/dev/null || true
+
+echo -e "${GREEN}✓ foundry.toml cleaned${NC}"
+echo ""
+
+# Step 3: Clean forge cache
+echo -e "${YELLOW}Step 3: Cleaning forge cache...${NC}"
 forge clean
 
 echo -e "${GREEN}✓ Forge cache cleaned${NC}"
-echo ""
-
-# Step 3: Initialize git if needed
-if [ ! -d ".git" ]; then
-    echo -e "${YELLOW}Step 3: Initializing git...${NC}"
-    git init
-else
-    echo -e "${YELLOW}Step 3: Git already initialized${NC}"
-fi
-
 echo ""
 
 # Step 4: Commit changes
@@ -47,8 +43,8 @@ git commit -m "Clean slate for Far Meow deployment" || echo "Nothing to commit"
 echo -e "${GREEN}✓ Changes committed${NC}"
 echo ""
 
-# Step 5: Install dependencies
-echo -e "${YELLOW}Step 5: Installing forge dependencies...${NC}"
+# Step 5: Install dependencies to lib/
+echo -e "${YELLOW}Step 5: Installing forge dependencies to lib/...${NC}"
 forge install foundry-rs/forge-std
 forge install OpenZeppelin/openzeppelin-contracts@v4.9.3
 forge install OpenZeppelin/openzeppelin-contracts-upgradeable@v4.9.3
@@ -58,9 +54,13 @@ echo ""
 
 # Step 6: Verify installation
 echo -e "${YELLOW}Step 6: Verifying installation...${NC}"
-ls lib/
-
-echo -e "${GREEN}✓ lib/ folder contents listed above${NC}"
+if [ -d "lib" ]; then
+    ls lib/
+    echo -e "${GREEN}✓ lib/ folder verified${NC}"
+else
+    echo -e "${RED}✗ lib/ folder not found${NC}"
+    exit 1
+fi
 echo ""
 
 # Step 7: Set environment variables
