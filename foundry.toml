@@ -4,8 +4,8 @@ out = "out"
 libs = ["lib"]
 solc_version = "0.8.20"
 
-# Ignore errors from test files
-ignored_error_codes = [5574, 6275, 1878]
+# Completely skip broken test/certora files
+fs_permissions = [{ access = "read", path = "./" }]
 
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",

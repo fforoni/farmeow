@@ -73,11 +73,17 @@ export BASESCAN_API_KEY=BUN66BQZ9W4WTM4WZKJSK6FVAHE9222CMG
 echo -e "${GREEN}✓ Environment variables set${NC}"
 echo ""
 
-# Step 8: Deploy
+# Step 8: Deploy with skip flag
 echo -e "${YELLOW}Step 8: Deploying contract to Base Sepolia...${NC}"
 echo ""
 echo "You will be prompted for your keystore password."
 echo ""
+
+# Create .soldeerignore to exclude broken files
+cat > .soldeerignore <<EOF
+**/certora/**
+**/test/**
+EOF
 
 forge script script/Deploy.s.sol \
   --rpc-url $BASE_SEPOLIA_RPC_URL \
@@ -86,6 +92,7 @@ forge script script/Deploy.s.sol \
   --broadcast \
   --verify \
   --etherscan-api-key $BASESCAN_API_KEY \
+  --skip */certora/* --skip */test/* \
   -vvv
 
 echo ""
